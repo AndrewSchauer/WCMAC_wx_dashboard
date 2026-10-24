@@ -1,0 +1,6 @@
+flask>=3.0
+gunicorn>=21.0
+numpy>=1.26
+matplotlib>=3.8
+requests>=2.31
+tzdata>=2024.1

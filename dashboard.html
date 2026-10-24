@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WCMAC Weather Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<style>
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#07080f;--panel:#0c0d18;--surface:#10111f;--surface2:#14152a;
+  --border:#1c1e38;--border-hi:#2a2d55;
+  --accent:#3d8eff;--accent-lo:rgba(61,142,255,0.12);
+  --cyan:#00e5ff;--green:#00e676;--amber:#ffab40;--red:#ff3d57;
+  --snotel:#a78bfa;--synoptic:#00e676;
+  --text:#c8d4f0;--text-mid:#7080aa;--text-dim:#343860;
+  --mono:'Share Tech Mono',monospace;--cond:'Barlow Condensed',sans-serif;
+}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--cond);font-size:14px}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-thumb{background:var(--border-hi);border-radius:3px}
+::-webkit-scrollbar-track{background:transparent}
+#app{display:flex;flex-direction:column;height:100vh}
+#header{flex-shrink:0;height:64px;display:flex;align-items:center;padding:0 24px;background:var(--panel);border-bottom:1px solid var(--border);position:relative;gap:16px}
+#header::after{content:'';position:absolute;bottom:-1px;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--cyan) 40%,var(--accent) 60%,transparent);background-size:200% 100%;animation:shimmer 6s linear infinite}
+@keyframes shimmer{from{background-position:200% 0}to{background-position:-200% 0}}
+.logo{font-family:var(--cond);font-size:22px;font-weight:700;letter-spacing:3px;color:var(--cyan);display:flex;align-items:center;gap:12px;white-space:nowrap;margin-right:auto}
+.logo-snowflake{font-size:22px;line-height:1;color:var(--cyan);text-shadow:0 0 10px var(--cyan);flex-shrink:0;user-select:none}
+.logo-sub{color:var(--text-mid);font-weight:400;font-size:15px;letter-spacing:1px}
+#clock{font-family:var(--mono);font-size:11px;color:var(--text-mid);letter-spacing:1px;flex-shrink:0}
+#net-tabs{display:flex;gap:6px;flex-shrink:0}
+.net-tab{font-family:var(--mono);font-size:13px;letter-spacing:2px;padding:9px 22px;border-radius:4px;border:1px solid var(--border);color:var(--text-dim);cursor:pointer;transition:all .15s;white-space:nowrap}
+.net-tab:hover{border-color:var(--border-hi);color:var(--text)}
+.net-tab.active[data-net="snotel"]{border-color:var(--snotel);color:var(--snotel);background:rgba(167,139,250,0.07)}
+.net-tab.active[data-net="summary"]{border-color:var(--amber);color:var(--amber);background:rgba(255,171,64,0.07)}
+.net-tab.active[data-net="synoptic"]{border-color:var(--synoptic);color:var(--synoptic);background:rgba(0,230,118,0.07)}
+#theme-switcher{display:flex;align-items:center;gap:4px;padding:4px 6px;background:var(--surface);border:1px solid var(--border);border-radius:20px;flex-shrink:0}
+.theme-option{font-family:var(--mono);font-size:10px;letter-spacing:1px;color:var(--text-dim);padding:3px 9px;border-radius:14px;cursor:pointer;transition:background .2s,color .2s;user-select:none;white-space:nowrap}
+.theme-option.active{background:var(--accent);color:#fff}
+html[data-theme='gray']{
+  --bg:#b3b3b3;--panel:#c2c2c2;--surface:#d0d0d0;--surface2:#c8c8c8;
+  --border:#a0a0a0;--border-hi:#888;
+  --accent:#1a5fd4;--accent-lo:rgba(26,95,212,0.12);
+  --cyan:#0077bb;--green:#007a10;--amber:#b85c00;--red:#c01020;
+  --snotel:#7c3aed;--synoptic:#00c853;--text:#111;--text-mid:#333;--text-dim:#666;
+}
+html[data-theme='light']{
+  --bg:#f0f2f8;--panel:#e4e8f4;--surface:#fff;--surface2:#eaecf8;
+  --border:#c8ccde;--border-hi:#9aa0c8;
+  --accent:#2060e0;--accent-lo:rgba(32,96,224,0.10);
+  --cyan:#0088cc;--green:#00880a;--amber:#cc6600;--red:#cc1030;
+  --snotel:#7c3aed;--synoptic:#00c853;--text:#1a1e3a;--text-mid:#3a4480;--text-dim:#8890b8;
+}
+#body{display:flex;flex:1;overflow:hidden}
+#sidebar{width:226px;flex-shrink:0;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.sidebar-label{padding:9px 14px 7px;font-family:var(--mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);border-bottom:1px solid var(--border);flex-shrink:0}
+#wx-sidebar{display:none;flex-direction:column;flex:1;overflow:hidden}
+#sidebar.net-wx #wx-sidebar{display:flex}
+#snotel-sidebar{display:none;flex-direction:column;flex:1;overflow:hidden}
+#sidebar.net-snotel #snotel-sidebar{display:flex}
+#synoptic-sidebar{display:none;flex-direction:column;flex:1;overflow:hidden}
+#sidebar.net-synoptic #synoptic-sidebar{display:flex}
+#synoptic-list{flex:1;overflow-y:auto;padding:4px 6px}
+#station-list,#snotel-list{flex:1;overflow-y:auto;padding:4px 6px}
+.scard{display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:3px;border-radius:3px;border:1px solid var(--border);background:var(--surface);cursor:pointer;transition:border-color .15s,background .15s;animation:slideIn .22s ease both}
+@keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:none}}
+.scard:hover{border-color:var(--border-hi);background:var(--surface2)}
+.scard.active{border-color:var(--accent);background:var(--accent-lo)}
+.scard.active .scard-name{color:#fff}
+.scard-dot{width:7px;height:7px;border-radius:50%;background:var(--text-dim);flex-shrink:0;transition:background .3s,box-shadow .3s}
+.scard.st-loaded .scard-dot{background:var(--green);box-shadow:0 0 6px var(--green)}
+.scard.st-loading .scard-dot{background:var(--amber);animation:blink .7s infinite}
+.scard.st-error .scard-dot{background:var(--red)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.15}}
+.scard-name{flex:1;font-family:var(--mono);font-size:11px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.scard-wind{font-family:var(--mono);font-size:8px;color:var(--snotel);flex-shrink:0;opacity:0.75;letter-spacing:1px}
+.scard-rm{font-size:12px;color:var(--text-dim);flex-shrink:0;opacity:0;transition:opacity .15s,color .15s;cursor:pointer;padding:2px 4px}
+.scard:hover .scard-rm{opacity:1}
+.scard-rm:hover{color:var(--red)}
+.add-form{border-top:1px solid var(--border);padding:11px 11px 13px;background:var(--panel);flex-shrink:0}
+.form-label{font-family:var(--mono);font-size:9px;letter-spacing:3px;color:var(--accent);margin-bottom:9px;display:block}
+.net-snotel .form-label{color:var(--snotel)}
+.field{margin-bottom:6px}
+.field-lbl{display:block;margin-bottom:3px;font-family:var(--mono);font-size:9px;letter-spacing:1px;color:var(--text-dim)}
+.field input,.field select{width:100%;padding:5px 8px;background:var(--surface);border:1px solid var(--border);border-radius:3px;color:var(--text);font-family:var(--mono);font-size:11px;outline:none;transition:border-color .15s}
+.field input:focus,.field select:focus{border-color:var(--accent)}
+.net-snotel .field input:focus,.net-snotel .field select:focus{border-color:var(--snotel)}
+.field input::placeholder{color:var(--text-dim)}
+.add-btn{margin-top:6px;width:100%;padding:7px;cursor:pointer;background:transparent;border:1px solid var(--accent);border-radius:3px;color:var(--accent);font-family:var(--mono);font-size:11px;letter-spacing:1px;transition:background .15s,color .15s}
+.add-btn:hover{background:var(--accent);color:#000}
+.net-snotel .add-btn{border-color:var(--snotel);color:var(--snotel)}
+.net-snotel .add-btn:hover{background:var(--snotel);color:#fff}
+#snotel-search-results{background:var(--surface);border:1px solid var(--border);border-radius:3px;max-height:150px;overflow-y:auto;margin-top:3px;display:none}
+.search-result-item{padding:6px 9px;font-family:var(--mono);font-size:10px;color:var(--text);cursor:pointer;border-bottom:1px solid var(--border)}
+.search-result-item:last-child{border-bottom:none}
+.search-result-item:hover{background:var(--surface2);color:var(--snotel)}
+.search-result-elev{color:var(--text-dim);font-size:9px;margin-left:6px}
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#plot-area{flex:1;position:relative;overflow:hidden}
+.panel{position:absolute;inset:0;display:none;flex-direction:column;overflow-y:auto;overflow-x:hidden;padding:20px 24px 32px}
+.panel.active{display:flex}
+.state-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;height:100%}
+.state-icon{font-size:42px;color:var(--border-hi)}
+.state-msg{font-family:var(--mono);font-size:12px;color:var(--text-mid);line-height:1.8}
+.spinner{width:36px;height:36px;border:2px solid var(--border-hi);border-top-color:var(--accent);border-radius:50%;animation:spin .75s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.error-card{background:rgba(255,61,87,.07);border:1px solid var(--red);border-radius:4px;padding:18px 28px;font-family:var(--mono);font-size:11px;color:var(--red);max-width:520px;line-height:2;text-align:center}
+.retry-btn{margin-top:10px;padding:6px 18px;background:transparent;border:1px solid var(--red);border-radius:3px;color:var(--red);font-family:var(--mono);font-size:11px;cursor:pointer}
+.retry-btn:hover{background:rgba(255,61,87,.15)}
+.station-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;flex-shrink:0}
+.station-title{font-family:var(--cond);font-size:22px;font-weight:700;color:white;letter-spacing:1px}
+.station-title a{color:var(--cyan);text-decoration:none;transition:color .15s}
+.station-title a:hover{color:white;text-decoration:underline}
+.station-daterange{font-family:var(--mono);font-size:11px;color:var(--text-mid);margin-top:3px}
+.refresh-btn{padding:6px 15px;background:transparent;border:1px solid var(--border-hi);border-radius:3px;color:var(--text-mid);font-family:var(--mono);font-size:10px;letter-spacing:1px;cursor:pointer;transition:border-color .15s,color .15s;flex-shrink:0;margin-left:12px}
+.refresh-btn:hover{border-color:var(--cyan);color:var(--cyan)}
+.stats-bar{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;flex-shrink:0}
+.stat-chip{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:8px 14px;display:flex;flex-direction:column;gap:3px;min-width:90px}
+.stat-label{font-family:var(--mono);font-size:9px;letter-spacing:1px;color:var(--text-dim)}
+.stat-value{font-family:var(--mono);font-size:15px;font-weight:700;color:white}
+.plot-section{margin-bottom:24px;flex-shrink:0}
+.plot-section-header{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.plot-section-title{font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--text-mid);text-transform:uppercase}
+.station-link{font-family:var(--mono);font-size:10px;color:var(--snotel);text-decoration:none;letter-spacing:1px;opacity:0.85;transition:opacity .15s}
+.station-link:hover{opacity:1;text-decoration:underline}
+.plot-img-wrap{position:relative;display:inline-block;width:100%}
+.plot-img{width:100%;max-width:900px;border-radius:4px;box-shadow:0 4px 32px rgba(0,0,0,.6);cursor:zoom-in;display:block;animation:fadeUp .3s ease both}.plot-img.compact{width:auto;max-width:900px;display:block;margin:0 auto}.plot-img.wind-fig{max-width:100%}
+@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.table-section{flex-shrink:0}
+.table-section-title{font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--text-mid);margin-bottom:8px;text-transform:uppercase}
+.table-wrap{overflow:auto;max-height:420px;border:1px solid var(--border);border-radius:4px;background:var(--surface)}
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
+thead tr{background:var(--surface2);position:sticky;top:0;z-index:2}
+thead th{padding:8px 12px;text-align:left;color:#e8f0ff;font-size:12px;font-weight:700;letter-spacing:1px;border-bottom:2px solid var(--cyan);white-space:nowrap;text-shadow:0 0 8px rgba(0,229,255,0.3)}
+tbody tr:nth-child(even){background:var(--surface2)}
+tbody tr:hover{background:rgba(61,142,255,0.07)}
+tbody td{padding:6px 12px;color:var(--text);white-space:nowrap;border-bottom:1px solid var(--border)}
+#statusbar{flex-shrink:0;height:24px;background:var(--panel);border-top:1px solid var(--border);display:flex;align-items:center;padding:0 12px;gap:20px}
+#status-msg{font-family:var(--mono);font-size:10px;color:var(--text-dim);flex:1}
+#status-msg.ok{color:var(--green)}
+#status-msg.err{color:var(--red)}
+.sb-pill{font-family:var(--mono);font-size:10px;color:var(--text-dim)}
+#lightbox{display:none;position:fixed;inset:0;z-index:1000;background:rgba(4,4,12,0.97);backdrop-filter:blur(8px)}
+#lightbox.open{display:block}
+#lb-wrap{width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:grab}
+#lb-wrap.dragging{cursor:grabbing}
+#lb-img{max-width:none;transform-origin:center center;user-select:none;pointer-events:none;max-height:none}
+#lb-toolbar{position:fixed;top:14px;right:14px;display:flex;gap:8px;z-index:1001}
+.lb-btn{padding:6px 14px;background:rgba(12,13,24,.92);border:1px solid var(--border-hi);border-radius:3px;color:var(--text-mid);font-family:var(--mono);font-size:11px;letter-spacing:1px;cursor:pointer;transition:border-color .15s,color .15s}
+.lb-btn:hover{border-color:var(--cyan);color:var(--cyan)}
+#lb-hint{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:10px;color:var(--text-dim);pointer-events:none;letter-spacing:1px}
+/* Hover tooltip */
+
+
+.sum-toggle-bar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px;max-width:100%}
+.sum-toggle{font-family:var(--mono);font-size:11px;letter-spacing:1px;padding:4px 10px;border-radius:12px;border:1px solid var(--border-hi);color:var(--text-mid);cursor:pointer;transition:all .15s;user-select:none;white-space:nowrap}
+.sum-toggle:hover{border-color:var(--text-mid);color:var(--text)}
+.sum-toggle.active{color:#111;font-weight:700;border-color:transparent}
+.sum-toggle.inactive{opacity:0.35;filter:grayscale(0.5)}
+.sum-rebuild-btn{font-family:var(--mono);font-size:11px;letter-spacing:1px;padding:4px 14px;border-radius:20px;border:1px solid var(--amber);color:var(--amber);cursor:pointer;background:transparent;transition:all .15s;margin-left:8px}
+.sum-rebuild-btn:hover{background:rgba(255,171,64,0.15)}
+.sum-table-wrap{margin-bottom:28px;overflow-x:auto;max-width:100%}
+.sum-table-title{font-family:var(--mono);font-size:13px;letter-spacing:2px;color:var(--amber);text-transform:uppercase;margin-bottom:8px;padding-left:2px}
+.sum-table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:15px}
+.sum-table th{background:var(--surface2);color:var(--text-mid);font-size:12px;letter-spacing:1px;text-transform:uppercase;padding:8px 14px;text-align:left;border-bottom:1px solid var(--border-hi);white-space:nowrap}
+.sum-table td{padding:9px 14px;border-bottom:1px solid var(--border);color:var(--text);white-space:nowrap;vertical-align:middle}
+.sum-table tr:last-child td{border-bottom:none}
+.sum-table tr:hover td{background:var(--surface)}
+.sum-table td.st-name{color:var(--cyan);font-size:14px}
+.sum-table td.st-val{text-align:center;color:#7080aa}
+.sum-table td.st-na{color:var(--text-dim);text-align:center}
+.sum-table td.st-loading{color:var(--amber);text-align:center;font-style:italic}
+
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="header">
+    <div class="logo">
+      <span class="logo-snowflake">❅</span>
+      WCMAC WEATHER
+      <span class="logo-sub">/ DASHBOARD</span>
+    </div>
+    <div id="net-tabs">
+      <div class="net-tab" data-net="snotel">SNOTEL</div>
+      <div class="net-tab active" data-net="synoptic">WEATHER STATIONS</div>
+      <div class="net-tab" data-net="summary" id="summary-tab">SUMMARY</div>
+    </div>
+    <div id="theme-switcher">
+      <div class="theme-option active" data-theme="dark">DARK</div>
+      <div class="theme-option" data-theme="gray">GRAY</div>
+      <div class="theme-option" data-theme="light">LIGHT</div>
+    </div>
+    <div id="clock">--:--:-- UTC</div>
+    <div style="display:flex;align-items:center;gap:20px;font-family:var(--mono);font-size:11px;flex-shrink:0">
+      <span style="color:var(--text-dim)">STATIONS <span id="hdr-count" style="color:var(--text-mid)">0</span></span>
+      <span style="color:var(--text-dim)">LOADED <span id="hdr-loaded" style="color:var(--text-mid)">0</span></span>
+    </div>
+  </div>
+  <div id="body">
+    <div id="sidebar">
+      <!-- WX sidebar -->
+      <div id="wx-sidebar">
+        <div class="sidebar-label">Active Stations</div>
+        <div id="station-list"></div>
+        <div class="add-form">
+          <span class="form-label">Add Station</span>
+          <div class="field">
+            <label class="field-lbl">Station Name</label>
+            <input id="inp-name" type="text" placeholder="e.g. Turnagain Pass" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="field">
+            <label class="field-lbl">Data URL</label>
+            <input id="inp-url" type="url" placeholder="https://wxstns.net/..." autocomplete="off" spellcheck="false">
+          </div>
+          <button class="add-btn" id="add-btn">+ LOAD STATION</button>
+        </div>
+      </div>
+      <!-- SNOTEL sidebar -->
+      <div id="snotel-sidebar">
+        <div class="sidebar-label">SNOTEL Stations</div>
+        <div id="snotel-list"></div>
+        <div class="add-form" id="snotel-add-form">
+          <span class="form-label">Add SNOTEL Station</span>
+          <div class="field">
+            <label class="field-lbl">Search by Name</label>
+            <input id="snotel-search-inp" type="text" placeholder="e.g. Stuart" autocomplete="off" spellcheck="false">
+            <div id="snotel-search-results"></div>
+          </div>
+          <div class="field">
+            <label class="field-lbl">Display Name</label>
+            <input id="snotel-inp-name" type="text" placeholder="Station name" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="field">
+            <label class="field-lbl">Triplet (e.g. 901:MT:SNTL)</label>
+            <input id="snotel-inp-triplet" type="text" placeholder="SITENUM:MT:SNTL" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="field">
+            <label class="field-lbl">Has Wind Data?</label>
+            <select id="snotel-inp-wind">
+              <option value="false">No</option>
+              <option value="true">Yes (SnoLite)</option>
+            </select>
+          </div>
+          <button class="add-btn" id="snotel-add-btn">+ LOAD STATION</button>
+        </div>
+      </div>
+      <!-- Synoptic sidebar -->
+      <div id="synoptic-sidebar">
+        <div class="sidebar-label">Weather Stations (RAWS)</div>
+        <div id="synoptic-list"></div>
+        <div class="add-form">
+          <span class="form-label" style="color:var(--synoptic)">Add Weather Station</span>
+          <div class="field">
+            <label class="field-lbl">Station Name</label>
+            <input id="syn-inp-name" type="text" placeholder="e.g. Point 6" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="field">
+            <label class="field-lbl">Station ID (e.g. PNTM8)</label>
+            <input id="syn-inp-stid" type="text" placeholder="e.g. PNTM8" autocomplete="off" spellcheck="false" style="text-transform:uppercase">
+          </div>
+          <button class="add-btn" id="syn-add-btn" style="border-color:var(--synoptic);color:var(--synoptic)">+ LOAD STATION</button>
+        </div>
+      </div>
+    </div>
+    <div id="main">
+      <div id="plot-area">
+        <div class="panel active" id="panel-welcome">
+          <div class="state-wrap">
+            <div class="state-icon">&#9672;</div>
+            <div class="state-msg">Loading default stations...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="statusbar">
+    <div id="status-msg">INITIALISING</div>
+    <div class="sb-pill" id="sb-count">-- STATIONS</div>
+  </div>
+</div>
+
+<div id="lightbox">
+  <div id="lb-toolbar">
+    <button class="lb-btn" id="lb-zoomin">+ ZOOM IN</button>
+    <button class="lb-btn" id="lb-zoomout">- ZOOM OUT</button>
+    <button class="lb-btn" id="lb-reset">RESET</button>
+    <button class="lb-btn" id="lb-close">X CLOSE</button>
+  </div>
+  <div id="lb-wrap"><img id="lb-img" src="" alt="Plot"></div>
+  <div id="lb-hint">scroll to zoom  |  drag to pan  |  ESC to close</div>
+</div>
+
+
+<script>
+
+// CLOCK
+function tickClock(){
+  var n=new Date(),p=function(x){return String(x).padStart(2,'0');};
+  document.getElementById('clock').textContent=
+    p(n.getUTCHours())+':'+p(n.getUTCMinutes())+':'+p(n.getUTCSeconds())+' UTC';
+}
+tickClock();setInterval(tickClock,1000);
+
+// STATE
+var stations={},activeId=null,seq=0,activeNet='synoptic';
+document.getElementById('sidebar').className='net-synoptic';
+function setStatus(msg,cls){var el=document.getElementById('status-msg');el.textContent=msg;el.className=cls||'';}
+function updateCounters(){
+  var all=Object.values(stations);
+  document.getElementById('hdr-count').textContent=all.length;
+  document.getElementById('hdr-loaded').textContent=all.filter(function(s){return s.state==='loaded';}).length;
+  document.getElementById('sb-count').textContent=all.length+' STATION'+(all.length!==1?'S':'');
+}
+
+// NETWORK SWITCHER (WX / SNOTEL / SUMMARY in header)
+document.querySelectorAll('.net-tab').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    var net=btn.dataset.net;
+    if(net==='summary'){
+      document.querySelectorAll('.net-tab').forEach(function(b){b.classList.toggle('active',b.dataset.net===net);});
+      switchPanel('summary');
+      rebuildSummary();
+      return;
+    }
+    activeNet=net;
+    document.querySelectorAll('.net-tab').forEach(function(b){
+      if(b.dataset.net!=='summary') b.classList.toggle('active',b.dataset.net===net);
+      else b.classList.remove('active');
+    });
+    var sb=document.getElementById('sidebar');
+    sb.className=net==='snotel'?'net-snotel':net==='synoptic'?'net-synoptic':'';
+    // If we're currently on summary panel, switch back to most recent station
+    if(activeId==='summary'){
+      var ids=Object.keys(stations);
+      if(ids.length) switchPanel(ids[ids.length-1]);
+      else document.getElementById('panel-welcome').classList.add('active');
+      activeId=null;
+    }
+  });
+});
+
+// PANELS
+function buildPanel(id){
+  var el=document.createElement('div');el.id='panel-'+id;el.className='panel';
+  el.appendChild(makeSpinner('Fetching '+stations[id].name+'...'));
+  document.getElementById('plot-area').appendChild(el);
+}
+function makeSpinner(msg){
+  var w=document.createElement('div');w.className='state-wrap';
+  var sp=document.createElement('div');sp.className='spinner';
+  var m=document.createElement('div');m.className='state-msg';m.textContent=msg;
+  w.appendChild(sp);w.appendChild(m);return w;
+}
+function clearPanel(id){
+  var p=document.getElementById('panel-'+id);if(!p)return null;
+  while(p.firstChild)p.removeChild(p.firstChild);return p;
+}
+function switchPanel(id){
+  document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active');});
+  document.querySelectorAll('.scard').forEach(function(c){c.classList.remove('active');});
+  var panel=document.getElementById('panel-'+id);if(panel)panel.classList.add('active');
+  var card=document.getElementById('card-'+id);if(card)card.classList.add('active');
+  activeId=id;
+}
+function removeStation(id){
+  if(!stations[id])return;
+  delete stations[id];
+  ['card-','panel-'].forEach(function(pfx){var el=document.getElementById(pfx+id);if(el)el.remove();});
+  var ids=Object.keys(stations);
+  if(activeId===id){
+    activeId=null;
+    if(ids.length) switchPanel(ids[ids.length-1]);
+    else document.getElementById('panel-welcome').classList.add('active');
+  }
+  updateCounters();setStatus('Station removed.');
+}
+
+// SHARED RENDER HELPERS
+function renderPlotSection(panel,label,src,stationUrl,isFirst,meta){
+  var sec=document.createElement('div');sec.className='plot-section';
+  var hdr=document.createElement('div');hdr.className='plot-section-header';
+  var lbl=document.createElement('div');lbl.className='plot-section-title';lbl.textContent=label;
+  hdr.appendChild(lbl);
+  if(isFirst&&stationUrl){
+    var a=document.createElement('a');a.className='station-link';
+    a.href=stationUrl;a.target='_blank';a.rel='noopener noreferrer';
+    a.textContent='VIEW ON NRCS \u2197';hdr.appendChild(a);
+  }
+  var wrap=document.createElement('div');wrap.className='plot-img-wrap';
+  var img=document.createElement('img');img.className='plot-img';
+  img.src=src;img.alt=label;img.title='Click to zoom';
+  if(meta){
+    img.dataset.xLabel = meta.x_label || '';
+    img.dataset.xStart = meta.x_start || '';
+    img.dataset.xEnd   = meta.x_end   || '';
+    img.dataset.xCount = meta.x_count || 0;
+    img.dataset.yLabel = meta.y_label || '';
+    img.dataset.yMin   = (meta.y_min != null ? meta.y_min : '');
+    img.dataset.yMax   = (meta.y_max != null ? meta.y_max : '');
+    if(meta.x_times && meta.x_times.length)
+      img.dataset.xTimes = JSON.stringify(meta.x_times);
+  }
+  img.addEventListener('click',function(){openLightbox(src);});
+  wrap.appendChild(img);sec.appendChild(hdr);sec.appendChild(wrap);panel.appendChild(sec);
+}
+function renderTable(panel,headers,rows,title){
+  if(!rows||!rows.length)return;
+  var ts=document.createElement('div');ts.className='table-section';
+  var tl=document.createElement('div');tl.className='table-section-title';tl.textContent=title||'Data';
+  var tw=document.createElement('div');tw.className='table-wrap';
+  var tbl=document.createElement('table');
+  var thead=document.createElement('thead'),hr=document.createElement('tr');
+  (headers||[]).forEach(function(h){var th=document.createElement('th');th.textContent=h;hr.appendChild(th);});
+  thead.appendChild(hr);tbl.appendChild(thead);
+  var tbody=document.createElement('tbody');
+  rows.forEach(function(row){
+    var tr=document.createElement('tr');
+    row.forEach(function(cell){var td=document.createElement('td');td.textContent=cell;tr.appendChild(td);});
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);tw.appendChild(tbl);ts.appendChild(tl);ts.appendChild(tw);panel.appendChild(ts);
+}
+function renderHeader(panel,id,stationUrl,onRefresh){
+  var s=stations[id],hdr=document.createElement('div');hdr.className='station-header';
+  var wrap=document.createElement('div');
+  var title=document.createElement('div');title.className='station-title';
+  if(stationUrl){
+    var a=document.createElement('a');a.href=stationUrl;a.target='_blank';a.rel='noopener noreferrer';
+    a.textContent=s.name;title.appendChild(a);
+  } else {
+    title.textContent=s.name;
+  }
+  var dr=document.createElement('div');dr.className='station-daterange';dr.textContent=(s.data&&s.data.date_range)||'';
+  wrap.appendChild(title);wrap.appendChild(dr);
+  var rf=document.createElement('button');rf.className='refresh-btn';rf.textContent='REFRESH';
+  rf.addEventListener('click',onRefresh);
+  hdr.appendChild(wrap);hdr.appendChild(rf);panel.appendChild(hdr);
+}
+function renderStats(panel,stats){
+  if(!stats||!stats.length)return;
+  var bar=document.createElement('div');bar.className='stats-bar';
+  stats.forEach(function(pair){
+    var chip=document.createElement('div');chip.className='stat-chip';
+    var lbl=document.createElement('div');lbl.className='stat-label';lbl.textContent=pair[0];
+    var val=document.createElement('div');val.className='stat-value';val.textContent=pair[1];
+    chip.appendChild(lbl);chip.appendChild(val);bar.appendChild(chip);
+  });
+  panel.appendChild(bar);
+}
+function renderError(id,msg,onRetry){
+  var p=clearPanel(id);
+  var card=document.createElement('div');card.className='error-card';
+  card.textContent='Failed to load '+stations[id].name+': '+msg;
+  var btn=document.createElement('button');btn.className='retry-btn';btn.textContent='RETRY';
+  btn.addEventListener('click',onRetry);
+  card.appendChild(document.createElement('br'));card.appendChild(btn);
+  var w=document.createElement('div');w.className='state-wrap';w.appendChild(card);p.appendChild(w);
+}
+
+
+// WX STATIONS
+function addWxStation(name,url){
+  name=(name!==undefined?name:document.getElementById('inp-name').value).trim();
+  url=(url!==undefined?url:document.getElementById('inp-url').value).trim();
+  if(!name||!url){setStatus('Name and URL required.','err');return;}
+  for(var k in stations){if(stations[k].url===url){setStatus('Already loaded: '+stations[k].name,'err');switchPanel(k);return;}}
+  var id='s'+(++seq);
+  stations[id]={name:name,url:url,net:'wx',state:'idle',data:null};
+  buildCard(id);buildPanel(id);switchPanel(id);fetchWx(id);
+  document.getElementById('inp-name').value='';document.getElementById('inp-url').value='';
+  updateCounters();
+}
+function fetchWx(id){
+  var s=stations[id];if(!s)return;
+  s.state='loading';setCardState(id,'loading');
+  setStatus('Fetching: '+s.name+'...');
+  var panel=clearPanel(id);panel.appendChild(makeSpinner('Fetching '+s.name+'...'));
+  fetch('/plot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:s.name,url:s.url})})
+  .then(function(r){return r.json();})
+  .then(function(json){
+    if(json.error)throw new Error(json.error);
+    s.data=json;
+    var p=clearPanel(id);
+    renderHeader(p,id,s.url,function(){fetchWx(id);});
+    renderStats(p,json.stats);
+    [{key:'temp',label:'Temperature'},{key:'wind',label:'Wind \u2014 Roses & Time Series'},{key:'precip',label:'Snow / Precipitation'}]
+    .forEach(function(pl){
+      if(!json.images||!json.images[pl.key])return;
+      var meta=(json.plot_meta&&json.plot_meta[pl.key])||null;
+      renderPlotSection(p,pl.label,'data:image/png;base64,'+json.images[pl.key],null,false,meta);
+    });
+    renderTable(p,json.table_headers,json.table_rows,'Hourly Data');
+    s.state='loaded';setCardState(id,'loaded');setStatus('Loaded: '+s.name,'ok');
+  })
+  .catch(function(err){
+    renderError(id,err.message,function(){fetchWx(id);});
+    s.state='error';setCardState(id,'error');setStatus('Error: '+err.message,'err');
+  })
+  .finally(function(){updateCounters();});
+}
+document.getElementById('inp-name').addEventListener('keydown',function(e){if(e.key==='Enter')document.getElementById('inp-url').focus();});
+document.getElementById('inp-url').addEventListener('keydown',function(e){if(e.key==='Enter')addWxStation();});
+document.getElementById('add-btn').addEventListener('click',function(){addWxStation();});
+
+// SNOTEL STATIONS
+function addSnotel(name,triplet,hasWind){
+  name=(name!==undefined?name:document.getElementById('snotel-inp-name').value).trim();
+  triplet=(triplet!==undefined?triplet:document.getElementById('snotel-inp-triplet').value).trim();
+  hasWind=(hasWind!==undefined?hasWind:(document.getElementById('snotel-inp-wind').value==='true'));
+  if(!name||!triplet){setStatus('Name and triplet required.','err');return;}
+  for(var k in stations){if(stations[k].triplet===triplet){setStatus('Already loaded: '+stations[k].name,'err');switchPanel(k);return;}}
+  var id='s'+(++seq);
+  stations[id]={name:name,triplet:triplet,has_wind:hasWind,net:'snotel',state:'idle',data:null};
+  buildCard(id);buildPanel(id);switchPanel(id);fetchSnotel(id);
+  document.getElementById('snotel-inp-name').value='';
+  document.getElementById('snotel-inp-triplet').value='';
+  document.getElementById('snotel-inp-wind').value='false';
+  updateCounters();
+}
+function fetchSnotel(id){
+  var s=stations[id];if(!s)return;
+  s.state='loading';setCardState(id,'loading');
+  setStatus('Fetching SNOTEL: '+s.name+'...');
+  var panel=clearPanel(id);panel.appendChild(makeSpinner('Fetching '+s.name+'...'));
+  fetch('/snotel_plot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:s.name,triplet:s.triplet,has_wind:s.has_wind})})
+  .then(function(r){var ct=r.headers.get('content-type')||'';if(!ct.includes('json'))return r.text().then(function(t){throw new Error('Server error: '+t.slice(0,120));});return r.json();})
+  .then(function(json){
+    if(json.error)throw new Error(json.error);
+    s.data=json;
+    var p=clearPanel(id);
+    renderHeader(p,id,json.station_url,function(){fetchSnotel(id);});
+    renderStats(p,json.stats);
+    var isFirst=true;
+    [{key:'snow',label:'Seasonal Snowpack \u2014 SWE & Depth'},
+     {key:'24h_depth',label:'24-Hour Snow Depth'},
+     {key:'24h_swe',label:'24-Hour SWE & Precipitation'},
+     {key:'24h_temp',label:'24-Hour Temperature'},
+     {key:'wind',label:'Wind \u2014 Roses & Time Series'}]
+    .forEach(function(pl){
+      if(!json.images||!json.images[pl.key])return;
+      var meta=(json.plot_meta&&json.plot_meta[pl.key])||null;
+      renderPlotSection(p,pl.label,'data:image/png;base64,'+json.images[pl.key],isFirst?json.station_url:null,isFirst,meta);
+      isFirst=false;
+    });
+    renderTable(p,json.table_headers,json.table_rows,'Hourly Data (24-Hour)');
+    s.state='loaded';setCardState(id,'loaded');setStatus('Loaded: '+s.name,'ok');
+  })
+  .catch(function(err){
+    renderError(id,err.message,function(){fetchSnotel(id);});
+    s.state='error';setCardState(id,'error');setStatus('Error: '+err.message,'err');
+  })
+  .finally(function(){updateCounters();});
+}
+document.getElementById('snotel-add-btn').addEventListener('click',function(){addSnotel();});
+document.getElementById('snotel-inp-triplet').addEventListener('keydown',function(e){if(e.key==='Enter')addSnotel();});
+
+// SNOTEL LIVE SEARCH
+var _stimer=null;
+document.getElementById('snotel-search-inp').addEventListener('input',function(){
+  clearTimeout(_stimer);
+  var q=this.value.trim(),res=document.getElementById('snotel-search-results');
+  if(q.length<2){res.style.display='none';return;}
+  _stimer=setTimeout(function(){
+    fetch('/snotel_search?q='+encodeURIComponent(q))
+    .then(function(r){return r.json();})
+    .then(function(items){
+      res.innerHTML='';
+      if(!items||!items.length){res.style.display='none';return;}
+      items.forEach(function(item){
+        var div=document.createElement('div');div.className='search-result-item';div.textContent=item.name;
+        if(item.elevation){var e=document.createElement('span');e.className='search-result-elev';e.textContent=Math.round(item.elevation)+'ft';div.appendChild(e);}
+        div.addEventListener('click',function(){
+          document.getElementById('snotel-inp-name').value=item.name;
+          document.getElementById('snotel-inp-triplet').value=item.triplet;
+          document.getElementById('snotel-search-inp').value='';
+          res.style.display='none';
+        });
+        res.appendChild(div);
+      });
+      res.style.display='block';
+    })
+    .catch(function(){res.style.display='none';});
+  },350);
+});
+document.addEventListener('click',function(e){
+  var f=document.getElementById('snotel-add-form');
+  if(f&&!f.contains(e.target))document.getElementById('snotel-search-results').style.display='none';
+});
+
+// SYNOPTIC STATIONS
+function addSynoptic(name,stid){
+  name=(name!==undefined?name:document.getElementById('syn-inp-name').value).trim();
+  stid=(stid!==undefined?stid:document.getElementById('syn-inp-stid').value).trim().toUpperCase();
+  if(!name||!stid){setStatus('Name and STID required.','err');return;}
+  for(var k in stations){if(stations[k].stid===stid){setStatus('Already loaded: '+stations[k].name,'err');switchPanel(k);return;}}
+  var id='s'+(++seq);
+  stations[id]={name:name,stid:stid,net:'synoptic',state:'idle',data:null};
+  buildCard(id);buildPanel(id);switchPanel(id);fetchSynoptic(id);
+  document.getElementById('syn-inp-name').value='';
+  document.getElementById('syn-inp-stid').value='';
+  updateCounters();
+}
+function fetchSynoptic(id){
+  var s=stations[id];if(!s)return;
+  s.state='loading';setCardState(id,'loading');
+  setStatus('Fetching: '+s.name+'...');
+  var panel=clearPanel(id);panel.appendChild(makeSpinner('Fetching '+s.name+'...'));
+  fetch('/synoptic_plot',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:s.name,stid:s.stid})})
+  .then(function(r){var ct=r.headers.get('content-type')||'';if(!ct.includes('json'))return r.text().then(function(t){throw new Error('Server error: '+t.slice(0,120));});return r.json();})
+  .then(function(json){
+    if(json.error)throw new Error(json.error);
+    s.data=json;
+    var p=clearPanel(id);
+    renderHeader(p,id,null,function(){fetchSynoptic(id);});
+    // Show meta info (elevation, coords) in date range slot
+    if(json.meta){
+      var m=json.meta;
+      var dr=p.querySelector('.station-daterange');
+      var parts=[];
+      if(m.elevation) parts.push(Math.round(m.elevation)+'ft');
+      if(m.lat&&m.lon) parts.push(m.lat.toFixed(3)+'°N '+Math.abs(m.lon).toFixed(3)+'°W');
+      if(parts.length&&dr) dr.textContent=parts.join('  •  ')+(json.date_range?' — '+json.date_range:'');
+    }
+    renderStats(p,json.stats);
+    [{key:'temp',  label:'Temperature — 48-Hour'},
+     {key:'wind',  label:'Wind — Roses & Time Series'},
+     {key:'precip',label:'Precipitation & Snow'}]
+    .forEach(function(pl){
+      if(!json.images||!json.images[pl.key])return;
+      var meta=(json.plot_meta&&json.plot_meta[pl.key])||null;
+      renderPlotSection(p,pl.label,'data:image/png;base64,'+json.images[pl.key],null,false,meta);
+    });
+    renderTable(p,json.table_headers,json.table_rows,'Observations (48-Hour)');
+    s.state='loaded';setCardState(id,'loaded');setStatus('Loaded: '+s.name,'ok');
+  })
+  .catch(function(err){
+    renderError(id,err.message,function(){fetchSynoptic(id);});
+    s.state='error';setCardState(id,'error');setStatus('Error: '+err.message,'err');
+  })
+  .finally(function(){updateCounters();});
+}
+document.getElementById('syn-add-btn').addEventListener('click',function(){addSynoptic();});
+document.getElementById('syn-inp-stid').addEventListener('keydown',function(e){if(e.key==='Enter')addSynoptic();});
+
+// SUMMARY PANEL
+var SUMMARY_ID='summary';
+
+// Summary table rows are built from the default station lists served by
+// app.py (/snotel_stations and /synoptic_stations), i.e. stations.xlsx.
+// Edit the lists in Snotel_Plots.py / Synoptic_Plots.py, not here.
+var PRECIP_TABLE_ROWS=[];   // all default SNOTEL, then weather stations
+var WIND_TABLE_ROWS=[];     // weather stations, then SnoLite stations with wind
+var _sumSnotelDefs=[],_sumWxDefs=[];
+function setSummaryRows(snotelDefs,wxDefs){
+  if(snotelDefs) _sumSnotelDefs=snotelDefs;
+  if(wxDefs)     _sumWxDefs=wxDefs;
+  var sn=_sumSnotelDefs.map(function(d){return {id:d.triplet,net:'snotel',label:d.name,wind:!!d.has_wind};});
+  var wx=_sumWxDefs.map(function(d){return {id:d.stid,net:'synoptic',label:d.name};});
+  PRECIP_TABLE_ROWS=sn.concat(wx);
+  WIND_TABLE_ROWS=wx.concat(sn.filter(function(r){return r.wind;}));
+}
+
+function _findStation(rowDef){
+  for(var sid in stations){
+    var s=stations[sid];
+    if(s.net!==rowDef.net) continue;
+    if(rowDef.net==='snotel'&&s.triplet===rowDef.id) return s;
+    if((rowDef.net==='synoptic'||rowDef.net==='wx')&&s.stid===rowDef.id) return s;
+  }
+  return null;
+}
+// Row label with elevation once the station has loaded (e.g. "Point 6 (7856’)")
+function _rowLabel(row,s){
+  var elev=null;
+  if(s&&s.data){
+    if(s.data.meta&&s.data.meta.elevation) elev=Math.round(s.data.meta.elevation);
+    else { var e=_statVal(s,'Elevation'); if(e) elev=e.replace(/[^0-9]/g,''); }
+  }
+  return row.label+(elev?' ('+Number(elev).toLocaleString()+'\u2019)':'');
+}
+function _statVal(s,label){
+  if(!s||!s.data||!s.data.stats) return null;
+  for(var i=0;i<s.data.stats.length;i++){var p=s.data.stats[i];if(p[0]===label)return p[1];}
+  return null;
+}
+function _num(str){
+  if(!str) return null;
+  var n=str.replace(/[\s]*(°F|mph|in|ft)[\s]*$/,'').replace(/^[+]/,'');
+  return n===''?null:n;
+}
+function _td(val,cls){
+  if(val===null||val===undefined) return '<td class="st-na">\u2013</td>';
+  return '<td class="'+(cls||'st-val')+'">'+val+'</td>';
+}
+function _tblDepth(s){
+  if(!s||!s.data) return null;
+  var hdrs=s.data.table_headers||[];var rows=s.data.table_rows||[];
+  if(!rows.length) return null;
+  var di=hdrs.indexOf('Snow Depth (in)');
+  return di>=0?rows[0][di]:null;
+}
+function buildSummaryTables(container){
+  var pt='<div class="sum-table-wrap"><div class="sum-table-title">Snowpack &amp; Precipitation \u2014 Last 24h</div>';
+  pt+='<table class="sum-table"><tr><th>Station</th><th>Temp Avg (\u00b0F)</th><th>Snow (in)</th><th>Water (in)</th><th>Snow Depth (in)</th></tr>';
+  PRECIP_TABLE_ROWS.forEach(function(row){
+    var s=_findStation(row);
+    if(!s||s.state!=='loaded'){pt+='<tr><td class="st-name">'+_rowLabel(row,null)+'</td><td class="st-na" colspan="4">\u2013</td></tr>';return;}
+    var avgT=_num(_statVal(s,'Avg Temp'));
+    var snow,water,depth;
+    if(row.net==='snotel'){snow=_num(_statVal(s,'24h Snow'));water=_num(_statVal(s,'24h SWE'));depth=_num(_statVal(s,'Snow Depth'))||_tblDepth(s);}
+    else{snow=_num(_statVal(s,'24h Snow \u0394'));water=_num(_statVal(s,'Precip Accum')||_statVal(s,'Precip (24h sum)'));depth=_num(_statVal(s,'Snow Depth'));}
+    pt+='<tr><td class="st-name">'+_rowLabel(row,s)+'</td>'+_td(avgT)+_td(snow)+_td(water)+_td(depth)+'</tr>';
+  });
+  pt+='</table></div>';
+  var wt='<div class="sum-table-wrap"><div class="sum-table-title">Wind \u2014 Last 24h</div>';
+  wt+='<table class="sum-table"><tr><th>Station</th><th>Temp Avg (\u00b0F)</th><th>Wind Dir</th><th>Avg Wind (mph)</th><th>Max Gust (mph)</th></tr>';
+  WIND_TABLE_ROWS.forEach(function(row){
+    var s=_findStation(row);
+    if(!s||s.state!=='loaded'){wt+='<tr><td class="st-name">'+_rowLabel(row,null)+'</td><td class="st-na" colspan="4">\u2013</td></tr>';return;}
+    var avgT=_num(_statVal(s,'Avg Temp'));
+    var dir=_statVal(s,'Wind Dir')||_statVal(s,'Primary Dir');
+    var avg=_num(_statVal(s,'Avg Wind')||_statVal(s,'Avg Speed'));
+    var gust=_num(_statVal(s,'Max Gust'));
+    wt+='<tr><td class="st-name">'+_rowLabel(row,s)+'</td>'+_td(avgT)+_td(dir,'st-val')+_td(avg)+_td(gust)+'</tr>';
+  });
+  wt+='</table></div>';
+  container.insertAdjacentHTML('beforeend',pt);
+  container.insertAdjacentHTML('beforeend',wt);
+}
+
+var summaryExcluded={};
+var CHIP_COLORS=['#00e5ff','#ff6f00','#00e676','#ff3d57','#d4a0ff',
+                 '#ffeb3b','#4fc3f7','#ff80ab','#b9f542','#a0522d',
+                 '#00bcd4','#ffa726'];
+var _sumWindDiv=null;
+var _sumToggleBar=null;
+var _sumAllLoaded=null;
+
+function buildSummaryPanel(){
+  if(document.getElementById('panel-'+SUMMARY_ID))return;
+  var el=document.createElement('div');el.id='panel-'+SUMMARY_ID;el.className='panel';
+  el.innerHTML='<div class="state-wrap"><div class="state-msg" style="color:var(--amber)">Click SUMMARY above to view network charts</div></div>';
+  document.getElementById('plot-area').appendChild(el);
+}
+
+function rebuildSummary(){
+  var p=document.getElementById('panel-'+SUMMARY_ID);
+  if(!p)return;
+  if(activeId!==SUMMARY_ID)return;
+  var allLoaded=Object.values(stations).filter(function(s){return s.state==='loaded'&&s.data;});
+  _sumAllLoaded=allLoaded;
+  if(!allLoaded.length){
+    p.innerHTML='<div class="state-wrap"><div class="state-msg" style="color:var(--amber)">No stations loaded yet</div></div>';
+    return;
+  }
+  while(p.firstChild)p.removeChild(p.firstChild);
+  var hdr=document.createElement('div');hdr.className='station-header';
+  var t=document.createElement('div');t.className='station-title';t.textContent='Network Summary';
+  hdr.appendChild(t);p.appendChild(hdr);
+  var tblWrap=document.createElement('div');tblWrap.id='sum-tbl-wrap';
+  tblWrap.style.cssText='max-width:100%;margin-bottom:28px;';
+  p.appendChild(tblWrap);
+  buildSummaryTables(tblWrap);
+  var tempDiv=document.createElement('div');tempDiv.id='sum-temp-div';p.appendChild(tempDiv);
+  var WIND_EXCL_STIDS={};  // STIDs to leave out of the summary wind charts
+  var toggleBar=document.createElement('div');toggleBar.className='sum-toggle-bar';
+  _sumToggleBar=toggleBar;
+  allLoaded.forEach(function(s,globalIdx){
+    var isSynoptic=(s.net==='synoptic'&&!WIND_EXCL_STIDS[s.stid]);
+    var isSnotelWind=(s.net==='snotel'&&s.has_wind);
+    if(!isSynoptic&&!isSnotelWind) return;
+    var sid=s.stid||s.triplet||s.name;
+    var col=CHIP_COLORS[globalIdx%CHIP_COLORS.length];
+    var chip=document.createElement('span');
+    chip.className='sum-toggle'+(summaryExcluded[sid]?' inactive':' active');
+    chip.textContent=s.name;
+    chip.dataset.sid=sid;
+    chip.dataset.col=col;
+    chip.style.borderColor=col;
+    if(!summaryExcluded[sid]) chip.style.background=col;
+    chip.addEventListener('click',function(){
+      if(summaryExcluded[sid]){
+        delete summaryExcluded[sid];
+        chip.classList.replace('inactive','active');
+        chip.style.background=chip.dataset.col||col;
+      } else {
+        summaryExcluded[sid]=true;
+        chip.classList.replace('active','inactive');
+        chip.style.background='';
+      }
+    });
+    toggleBar.appendChild(chip);
+  });
+  var rebuildBtn=document.createElement('button');
+  rebuildBtn.className='sum-rebuild-btn';
+  rebuildBtn.textContent='\uD83C\uDF2C\uFE0F UPDATE';
+  rebuildBtn.addEventListener('click',function(){_doWindPlots();});
+  toggleBar.appendChild(rebuildBtn);
+  p.appendChild(toggleBar);
+  var windDiv=document.createElement('div');windDiv.id='sum-wind-div';p.appendChild(windDiv);
+  _sumWindDiv=windDiv;
+  _doAllSummaryPlots(tempDiv,allLoaded);
+}
+
+function _doAllSummaryPlots(tempDiv,allLoaded){
+  var spin=document.createElement('div');spin.className='state-wrap';
+  spin.innerHTML='<div class="spinner"></div><div class="state-msg">Building summary...</div>';
+  tempDiv.appendChild(spin);
+  fetch('/summary_plots',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({stations:allLoaded.map(function(s){return {name:s.name,data:s.data,net:s.net,has_wind:s.has_wind};})})
+  })
+  .then(function(r){return r.json();})
+  .then(function(json){
+    if(json.error)throw new Error(json.error);
+    while(tempDiv.firstChild)tempDiv.removeChild(tempDiv.firstChild);
+    if(json.images&&json.images['temp_max_box']){
+      renderPlotSection(tempDiv,'Temperature Summary \u2014 Max & Min (All Stations)',
+        'data:image/png;base64,'+json.images['temp_max_box'],null,false,null);
+    }
+    _doWindPlots();
+  })
+  .catch(function(err){
+    while(tempDiv.firstChild)tempDiv.removeChild(tempDiv.firstChild);
+    tempDiv.innerHTML='<div class="error-card">Summary error: '+err.message+'</div>';
+  });
+}
+
+function _doWindPlots(){
+  if(!_sumWindDiv) return;
+  _sumAllLoaded=Object.values(stations).filter(function(s){return s.state==='loaded'&&s.data;});
+  while(_sumWindDiv.firstChild)_sumWindDiv.removeChild(_sumWindDiv.firstChild);
+  var spin=document.createElement('div');spin.className='state-wrap';
+  spin.innerHTML='<div class="spinner"></div><div class="state-msg">Updating wind plots...</div>';
+  _sumWindDiv.appendChild(spin);
+  var WIND_EXCL={};  // STIDs to leave out of the summary wind charts
+  var loaded=_sumAllLoaded.filter(function(s){
+    var sid=s.stid||s.triplet||s.name;
+    if(s.stid&&WIND_EXCL[s.stid]) return false;
+    return !summaryExcluded[sid];
+  });
+  if(!loaded.length){
+    _sumWindDiv.removeChild(spin);
+    _sumWindDiv.innerHTML='<div class="state-wrap"><div class="state-msg" style="color:var(--text-dim)">All stations hidden \u2014 toggle some on</div></div>';
+    return;
+  }
+  fetch('/summary_plots',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({stations:loaded.map(function(s){return {name:s.name,data:s.data,net:s.net,has_wind:s.has_wind};})})
+  })
+  .then(function(r){return r.json();})
+  .then(function(json){
+    if(json.error)throw new Error(json.error);
+    while(_sumWindDiv.firstChild)_sumWindDiv.removeChild(_sumWindDiv.firstChild);
+    var sc=json.series_colors||{};
+    if(_sumToggleBar){
+      _sumToggleBar.querySelectorAll('.sum-toggle').forEach(function(chip){
+        var col=sc[chip.textContent];
+        if(!col) return;
+        chip.dataset.col=col;
+        chip.style.borderColor=col;
+        if(chip.classList.contains('active')) chip.style.background=col;
+      });
+    }
+    [{key:'wind_spd_stack',label:'Wind Speed \u2014 All Stations (overlaid)'},
+     {key:'wind_gust_stack',label:'Wind Gust \u2014 All Stations (overlaid)'}]
+    .forEach(function(pl){
+      if(!json.images||!json.images[pl.key])return;
+      renderPlotSection(_sumWindDiv,pl.label,'data:image/png;base64,'+json.images[pl.key],null,false,null);
+    });
+    var tw=document.getElementById('sum-tbl-wrap');
+    if(tw){while(tw.firstChild)tw.removeChild(tw.firstChild);buildSummaryTables(tw);}
+  })
+  .catch(function(err){
+    while(_sumWindDiv.firstChild)_sumWindDiv.removeChild(_sumWindDiv.firstChild);
+    _sumWindDiv.innerHTML='<div class="error-card">Wind plot error: '+err.message+'</div>';
+  });
+}
+
+
+
+// CARD HELPERS
+function buildCard(id){
+  var s=stations[id],listId=s.net==='snotel'?'snotel-list':s.net==='synoptic'?'synoptic-list':'station-list';
+  var el=document.createElement('div');el.id='card-'+id;el.className='scard';
+  var dot=document.createElement('div');dot.className='scard-dot';
+  var nm=document.createElement('div');nm.className='scard-name';nm.textContent=s.name;
+  el.appendChild(dot);el.appendChild(nm);
+  if(s.net==='snotel'&&s.has_wind){
+    var wlbl=document.createElement('div');wlbl.className='scard-wind';wlbl.textContent='WIND';el.appendChild(wlbl);
+  }
+  var rm=document.createElement('div');rm.className='scard-rm';rm.textContent='x';rm.title='Remove';
+  rm.addEventListener('click',function(e){e.stopPropagation();removeStation(id);});
+  el.appendChild(rm);
+  el.addEventListener('click',function(){switchPanel(id);});
+  document.getElementById(listId).appendChild(el);
+}
+function setCardState(id,st){
+  var el=document.getElementById('card-'+id);if(!el)return;
+  el.classList.remove('st-loading','st-loaded','st-error','active');
+  if(st)el.classList.add('st-'+st);
+  if(id===activeId)el.classList.add('active');
+}
+
+// LIGHTBOX
+var lbEl=document.getElementById('lightbox'),lbWrap=document.getElementById('lb-wrap'),lbImg=document.getElementById('lb-img');
+var lbScale=1,lbX=0,lbY=0,dragStart=null;
+function openLightbox(src){lbImg.src=src;lbScale=1;lbX=0;lbY=0;applyLb();lbEl.classList.add('open');document.body.style.overflow='hidden';}
+function closeLightbox(){lbEl.classList.remove('open');document.body.style.overflow='';}
+function lbZoom(f){lbScale=Math.min(Math.max(lbScale*f,0.3),12);applyLb();}
+function lbReset(){lbScale=1;lbX=0;lbY=0;applyLb();}
+function applyLb(){lbImg.style.transform='translate('+lbX+'px,'+lbY+'px) scale('+lbScale+')';}
+document.getElementById('lb-zoomin').addEventListener('click',function(){lbZoom(1.3);});
+document.getElementById('lb-zoomout').addEventListener('click',function(){lbZoom(0.77);});
+document.getElementById('lb-reset').addEventListener('click',lbReset);
+document.getElementById('lb-close').addEventListener('click',closeLightbox);
+lbEl.addEventListener('click',function(e){if(e.target===lbEl||e.target===lbWrap)closeLightbox();});
+lbWrap.addEventListener('wheel',function(e){
+  e.preventDefault();var f=e.deltaY<0?1.12:1/1.12;
+  var r=lbWrap.getBoundingClientRect(),cx=e.clientX-r.left-r.width/2,cy=e.clientY-r.top-r.height/2;
+  lbX=cx+(lbX-cx)*f;lbY=cy+(lbY-cy)*f;lbScale=Math.min(Math.max(lbScale*f,0.3),12);applyLb();
+},{passive:false});
+lbWrap.addEventListener('mousedown',function(e){
+  if(e.button!==0)return;dragStart={mx:e.clientX,my:e.clientY,lbX:lbX,lbY:lbY};lbWrap.classList.add('dragging');
+});
+document.addEventListener('mousemove',function(e){
+  if(!dragStart)return;lbX=dragStart.lbX+(e.clientX-dragStart.mx);lbY=dragStart.lbY+(e.clientY-dragStart.my);applyLb();
+});
+document.addEventListener('mouseup',function(){dragStart=null;lbWrap.classList.remove('dragging');});
+document.addEventListener('keydown',function(e){
+  if(!lbEl.classList.contains('open'))return;
+  if(e.key==='Escape')closeLightbox();
+  else if(e.key==='+'||e.key==='=')lbZoom(1.2);
+  else if(e.key==='-')lbZoom(1/1.2);
+  else if(e.key==='0')lbReset();
+  else if(e.key==='ArrowLeft'){lbX-=60;applyLb();}
+  else if(e.key==='ArrowRight'){lbX+=60;applyLb();}
+  else if(e.key==='ArrowUp'){lbY-=60;applyLb();}
+  else if(e.key==='ArrowDown'){lbY+=60;applyLb();}
+});
+
+// THEME
+(function(){
+  var stored=localStorage.getItem('wx-theme')||'dark';
+  applyTheme(stored);
+  document.querySelectorAll('.theme-option').forEach(function(btn){
+    btn.addEventListener('click',function(){applyTheme(btn.dataset.theme);localStorage.setItem('wx-theme',btn.dataset.theme);});
+  });
+  function applyTheme(theme){
+    document.documentElement.setAttribute('data-theme',theme==='dark'?'':theme);
+    document.querySelectorAll('.theme-option').forEach(function(b){b.classList.toggle('active',b.dataset.theme===theme);});
+  }
+})();
+
+// BOOTSTRAP
+window.onerror=function(msg,src,line){setStatus('JS error: '+msg+' (line '+line+')','err');};
+
+buildSummaryPanel();
+
+fetch('/synoptic_stations')
+  .then(function(r){return r.json();})
+  .then(function(defs){
+    setSummaryRows(null,defs);
+    setStatus('Loading '+defs.length+' stations...');
+    function nx(i){if(i>=defs.length){setStatus('');return;}var d=defs[i];addSynoptic(d.name,d.stid);setTimeout(function(){nx(i+1);},150);}
+    nx(0);
+  })
+  .catch(function(e){
+    setStatus('Could not reach server: '+e.message,'err');
+  });
+
+fetch('/snotel_stations')
+  .then(function(r){return r.json();})
+  .then(function(defs){
+    setSummaryRows(defs,null);
+    function nx(i){if(i>=defs.length)return;var d=defs[i];addSnotel(d.name,d.triplet,d.has_wind);setTimeout(function(){nx(i+1);},200);}
+    nx(0);
+  })
+  .catch(function(){console.warn('SNOTEL defaults unavailable');});
+</script>
+</body>
+</html>
