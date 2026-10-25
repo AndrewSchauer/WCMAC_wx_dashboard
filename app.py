@@ -69,6 +69,15 @@ SUMMARY_STATION_NAMES = (
 _DASHBOARD_HTML = open(os.path.join(_HERE, 'dashboard.html'), encoding='utf-8').read()
 
 
+def _req_hours(data, default=48):
+    """Plot window from the request ('hours'), limited to 1–7 days."""
+    try:
+        h = int(data.get('hours', default))
+    except (TypeError, ValueError):
+        h = default
+    return max(24, min(h, 168))
+
+
 # ── Routes ────────────────────────────────────────────────────────────────
 
 @app.route('/')
@@ -139,7 +148,8 @@ def synoptic_plot():
     try:
         # Source (IEM vs Synoptic) comes from the request or the default list
         station_data = sy.fetch_station(stid, source=data.get('source'),
-                                        network=data.get('network'), name=name)
+                                        network=data.get('network'), name=name,
+                                        hours=_req_hours(data))
         plots        = sy.build_synoptic_plots(name, station_data)
 
         def fig_to_b64(fig):
@@ -337,7 +347,8 @@ def snotel_plot():
     if not triplet:
         return jsonify({'error': 'No triplet provided'}), 400
     try:
-        station_data = sn.fetch_snotel_station(triplet, has_wind=has_wind)
+        station_data = sn.fetch_snotel_station(triplet, has_wind=has_wind,
+                                               hours=_req_hours(data))
         plots        = sn.build_snotel_plots(name, station_data, triplet)
 
         def fig_to_b64(fig):
