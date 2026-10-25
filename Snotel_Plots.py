@@ -266,7 +266,7 @@ def _cast(v):
 # Data assembly
 # ---------------------------------------------------------------------------
 
-def fetch_snotel_station(triplet, has_wind=False):
+def fetch_snotel_station(triplet, has_wind=False, hours=48):
     """
     Main entry point.  Fetches metadata + all available data for a station.
 
@@ -288,12 +288,14 @@ def fetch_snotel_station(triplet, has_wind=False):
 
     hourly_wind = {}
     if has_wind:
-        hourly_wind = get_hourly_data(triplet, ["WSPDV", "WSPDX", "WDIRV"], days_back=7,
-                                      tz_offset_hours=tz_off)
+        hourly_wind = get_hourly_data(triplet, ["WSPDV", "WSPDX", "WDIRV"],
+                                      days_back=hours // 24 + 1, tz_offset_hours=tz_off)
 
     # 48-hour hourly data for snow depth, SWE, and temperature (for plotting)
-    hourly_48h_raw = get_hourly_data(triplet, ["WTEQ", "SNWD", "TOBS", "PREC"], days_back=3,
-                                     tz_offset_hours=tz_off)
+    # Hourly snow depth, SWE, temperature and precip for the plot window
+    # (48 hours or 7 days, chosen with the toggle in the dashboard header)
+    hourly_48h_raw = get_hourly_data(triplet, ["WTEQ", "SNWD", "TOBS", "PREC"],
+                                     days_back=hours // 24 + 1, tz_offset_hours=tz_off)
 
     # Debug: show what the raw hourly fetch returned
     print(f"[SNOTEL {triplet}] hourly_48h_raw keys: { {k: len(v) for k, v in hourly_48h_raw.items()} }")
@@ -317,7 +319,7 @@ def fetch_snotel_station(triplet, has_wind=False):
             entries = daily.get(elem, [])
             recent = [e for e in entries
                       if e["value"] is not None
-                      and e["date"] >= days_ago(7)]
+                      and e["date"] >= days_ago(max(7, hours // 24))]
             if recent and target not in daily_as_hourly:
                 daily_as_hourly[target] = [
                     {"date": e["date"] + " 12:00:00", "value": e["value"]}
@@ -335,7 +337,7 @@ def fetch_snotel_station(triplet, has_wind=False):
         # Normal hourly station — apply 48h and 24h cutoffs
         # AWDB returns UTC timestamps; use utcnow() to avoid local-time offset errors
         _now_ak     = local_now()
-        _cutoff_48h = _now_ak - datetime.timedelta(hours=48)
+        _cutoff_48h = _now_ak - datetime.timedelta(hours=hours)   # plot window
         hourly_24h = {k: [e for e in sorted(v, key=lambda e: e["date"])
                           if _parse_dt(e["date"]) >= _cutoff_48h]
                       for k, v in hourly_48h_raw.items()}
@@ -412,6 +414,7 @@ def fetch_snotel_station(triplet, has_wind=False):
 
     return {
         "meta":          meta,
+        "window_hours":  hours,
         "daily":         daily,
         "hourly_wind":   hourly_wind,
         "hourly_24h":    hourly_24h,       # 48h of data for plotting
@@ -543,13 +546,31 @@ def _add_6hr_vlines_dates(ax, dates, x):
         pass
 
 
-def _add_6hr_vlines_times(ax, times, x):
-    """Add vertical gridlines at 0600, 1200, 1800, 0000 for time-indexed axes."""
-    for i, t in enumerate(times):
-        hhmm = str(t).strip()[:5]
-        if hhmm in ('06:00', '12:00', '18:00', '00:00', '0:00'):
-            ax.axvline(x=i, color='#7777bb', linewidth=1.3, linestyle='-',
-                       alpha=0.95, zorder=8)
+def _time_axis(date_strs):
+    """Ticks/labels/guide lines for a list of hourly date strings.
+    Same rules as the RAWS plots: HH:MM ticks + 6-hourly lines for 48 h,
+    day-name ticks + daily lines for the 7-day view."""
+    from Synoptic_Plots import time_axis
+    return time_axis([_parse_dt(d) for d in date_strs])
+
+
+def _window_label(hours):
+    """'48-Hour' / '7-Day' style label for a plot window length in hours."""
+    hours = int(hours)
+    return f"{hours // 24}-Day" if hours >= 72 and hours % 24 == 0 else f"{hours}-Hour"
+
+
+def _add_6hr_vlines_times(ax, tax):
+    """Vertical guide lines from a _time_axis() result."""
+    for i in tax["vlines"]:
+        ax.axvline(x=i, color='#7777bb', linewidth=1.3, linestyle='-',
+                   alpha=0.95, zorder=8)
+
+
+def _apply_time_ticks(ax, tax, rotation=30):
+    ax.set_xticks(tax["ticks"])
+    ax.set_xticklabels(tax["labels"], fontsize=13.0, color='lightgray',
+                       rotation=rotation, ha='right')
 
 
 def _hhmm(date_str):
@@ -708,8 +729,9 @@ def make_wind_bar(ax, times, vals, title, ylim, dirs=None):
     for y_val in range(0, ylim + 1, 5):
         ax.axhline(y_val, color='white', linewidth=1.1, linestyle='-', zorder=1)
 
-    # Vertical 6-hour gridlines
-    _add_6hr_vlines_times(ax, times, x)
+    # Vertical guide lines (6-hourly, or daily on the 7-day view)
+    tax = _time_axis(times)
+    _add_6hr_vlines_times(ax, tax)
 
     ax.bar(x, vals, color=colors, width=0.8, zorder=2, edgecolor='none')
     ax.plot(x, vals, color='white', linewidth=0.8, alpha=0.4, zorder=3)
@@ -736,10 +758,7 @@ def make_wind_bar(ax, times, vals, title, ylim, dirs=None):
     ax.tick_params(colors='lightgray', labelsize=16)
     ax.spines[:].set_color('#444466')
 
-    step = max(1, len(times) // 12)
-    ax.set_xticks(x[::step])
-    ax.set_xticklabels(times[::step], fontsize=13.0,
-                       color='lightgray', rotation=35, ha='right')
+    _apply_time_ticks(ax, tax, rotation=35)
     ax.grid(False)
     ax.set_xlim(-0.5, len(x) - 0.5)
     ax.set_ylim(0, ylim)
@@ -773,10 +792,10 @@ def _make_24h_snow_depth(station_name, station_data):
     if not snwd_entries:
         return None
 
-    times     = [_hhmm(e["date"]) for e in snwd_entries]
+    times     = [e["date"] for e in snwd_entries]
+    tax       = _time_axis(times)
     snwd_vals = np.array([e["value"] for e in snwd_entries])
     x         = np.arange(len(times))
-    tick_step = max(1, len(x) // 12)
 
     v_min = float(snwd_vals.min()); v_max = float(snwd_vals.max())
     span  = max(v_max - v_min, 0.5)
@@ -787,18 +806,18 @@ def _make_24h_snow_depth(station_name, station_data):
     ax.set_facecolor('#1a1a2e'); ax.spines[:].set_color('#444466')
     ax.tick_params(colors='lightgray', labelsize=16)
     _add_minor_hgrid(ax, y_lo, y_hi, 1, 5)
-    _add_6hr_vlines_times(ax, times, x)
+    _add_6hr_vlines_times(ax, tax)
     ax.fill_between(x, y_lo, snwd_vals, alpha=0.2, color='#7799ff', zorder=2)
     ax.plot(x, snwd_vals, color='#8899ff', linewidth=3.0, zorder=3, label='Snow Depth (in)')
     ax.set_ylim(y_lo, y_hi); ax.autoscale(False)
     ax.set_ylabel('Snow Depth (in)', color='#7799ff', fontsize=18.0)
     ax.yaxis.label.set_color('#7799ff'); ax.tick_params(axis='y', colors='#7799ff')
-    ax.set_xticks(x[::tick_step])
-    ax.set_xticklabels(times[::tick_step], fontsize=13.0, color='lightgray', rotation=30, ha='right')
+    _apply_time_ticks(ax, tax)
     ax.set_xlim(-0.5, len(x) - 0.5); ax.grid(False)
     ax.legend(loc='upper left', fontsize=14.0, facecolor='#16213e',
               edgecolor='#666688', labelcolor='white')
-    fig.suptitle(f'{station_name} — 48-Hour Snow Depth',
+    wl = _window_label(station_data.get("window_hours", 48))
+    fig.suptitle(f'{station_name} — {wl} Snow Depth',
                  fontsize=28.0, fontweight='bold', color='white')
     return fig
 
@@ -823,9 +842,9 @@ def _make_24h_swe_precip(station_name, station_data):
     swe_map   = {e["date"]: e["value"] for e in swe_entries}
     prec_map  = {e["date"]: e["value"] for e in prec_entries}
 
-    times = [_hhmm(t) for t in all_times]
+    times = list(all_times)
+    tax   = _time_axis(times)
     x     = np.arange(len(times))
-    tick_step = max(1, len(x) // 12)
 
     swe_vals  = np.array([swe_map.get(t, np.nan)  for t in all_times])
     prec_vals = np.array([prec_map.get(t, np.nan) for t in all_times])
@@ -834,7 +853,7 @@ def _make_24h_swe_precip(station_name, station_data):
     ax1.set_facecolor("#1a1a2e")
     ax1.spines[:].set_color("#444466")
     ax1.tick_params(colors="lightgray", labelsize=16)
-    _add_6hr_vlines_times(ax1, times, x)
+    _add_6hr_vlines_times(ax1, tax)
 
     ax2 = None
 
@@ -842,9 +861,9 @@ def _make_24h_swe_precip(station_name, station_data):
     swe_ok = not np.all(np.isnan(swe_vals))
     if swe_ok:
         sv_min = float(np.nanmin(swe_vals)); sv_max = float(np.nanmax(swe_vals))
-        sv_pad = max((sv_max - sv_min) * 0.12, 1)
-        sv_lo  = sv_min - sv_pad;   sv_hi  = sv_max + sv_pad
-        _add_minor_hgrid(ax1, sv_lo, sv_hi, 0.1, 0.5)
+        sv_pad = max((sv_max - sv_min) * 0.12, 0.25)
+        sv_lo  = max(sv_min - sv_pad, 0.0); sv_hi = sv_max + sv_pad   # SWE can't be < 0
+        _add_minor_hgrid(ax1, sv_lo, sv_hi, 0.1, 0.5)   # gridlines follow the SWE axis
         safe = np.where(np.isnan(swe_vals), sv_lo, swe_vals)
         ax1.fill_between(x, sv_lo, safe, alpha=0.2, color="#44ccff", zorder=2)
         ax1.plot(x, swe_vals, color="#44ddff", linewidth=3.0, zorder=4, label="SWE (in)")
@@ -861,7 +880,10 @@ def _make_24h_swe_precip(station_name, station_data):
         pv_lo  = pv_min - pv_pad;    pv_hi  = pv_max + pv_pad
         ax2 = ax1.twinx()
         ax2.set_facecolor("#1a1a2e"); ax2.spines[:].set_color("#444466")
-        _add_minor_hgrid(ax2, pv_lo, pv_hi, 0.1, 0.5)
+        # One set of gridlines per plot: the precip axis only gets them when
+        # there's no SWE axis. Its tick marks and labels are always shown.
+        if not swe_ok:
+            _add_minor_hgrid(ax2, pv_lo, pv_hi, 0.1, 0.5)
         safe2 = np.where(np.isnan(prec_vals), pv_lo, prec_vals)
         ax2.fill_between(x, pv_lo, safe2, alpha=0.18, color="#55ddaa", zorder=2)
         ax2.plot(x, prec_vals, color="#44ffcc", linewidth=3.0, zorder=5,
@@ -871,9 +893,7 @@ def _make_24h_swe_precip(station_name, station_data):
         ax2.yaxis.label.set_color("#55ddaa")
         ax2.tick_params(colors="#55ddaa", labelsize=16)
 
-    ax1.set_xticks(x[::tick_step])
-    ax1.set_xticklabels(times[::tick_step],
-                        fontsize=13.0, color="lightgray", rotation=30, ha="right")
+    _apply_time_ticks(ax1, tax)
     ax1.set_xlim(-0.5, len(x) - 0.5); ax1.grid(False)
 
     h1, l1 = ax1.get_legend_handles_labels()
@@ -883,7 +903,8 @@ def _make_24h_swe_precip(station_name, station_data):
                    facecolor="#16213e", edgecolor="#666688", labelcolor="white")
 
     suffix = " & Precip" if prec_ok else " (no precip data)"
-    fig.suptitle(f"{station_name} — 48-Hour SWE{suffix}",
+    wl = _window_label(station_data.get("window_hours", 48))
+    fig.suptitle(f"{station_name} — {wl} SWE{suffix}",
                  fontsize=28.0, fontweight="bold", color="white")
     return fig
 def _make_24h_temp(station_name, station_data):
@@ -893,10 +914,10 @@ def _make_24h_temp(station_name, station_data):
     if not t_entries:
         return None
 
-    times = [_hhmm(e["date"]) for e in t_entries]
+    times = [e["date"] for e in t_entries]
+    tax   = _time_axis(times)
     vals  = np.array([e["value"] for e in t_entries])
     x     = np.arange(len(times))
-    tick_step = max(1, len(x) // 12)
 
     t_min = float(vals.min())
     t_max = float(vals.max())
@@ -911,7 +932,7 @@ def _make_24h_temp(station_name, station_data):
     ax.tick_params(colors='lightgray', labelsize=16)
 
     _add_minor_hgrid(ax, y_lo, y_hi, 1, 5)
-    _add_6hr_vlines_times(ax, times, x)
+    _add_6hr_vlines_times(ax, tax)
 
     # fill_between with explicit y_lo baseline to prevent axis expansion
     ax.fill_between(x, y_lo, vals, alpha=0.15, color='#ff9944', zorder=2)
@@ -927,12 +948,12 @@ def _make_24h_temp(station_name, station_data):
     ax.autoscale(False)
     ax.set_ylabel('°F', color='lightgray', fontsize=18.0)
     ax.yaxis.label.set_color('lightgray')
-    ax.set_xticks(x[::tick_step])
-    ax.set_xticklabels(times[::tick_step], fontsize=13.0, color='lightgray', rotation=30, ha='right')
+    _apply_time_ticks(ax, tax)
     ax.set_xlim(-0.5, len(x) - 0.5)
     ax.grid(False)
 
-    fig.suptitle(f'{station_name} — 48-Hour Temperature',
+    wl = _window_label(station_data.get("window_hours", 48))
+    fig.suptitle(f'{station_name} — {wl} Temperature',
                  fontsize=28.0, fontweight='bold', color='white')
     return fig
 def _make_seasonal_swe_depth(station_name, station_data):
@@ -1072,8 +1093,11 @@ def build_snotel_plots(station_name, station_data, triplet):
         gst_map   = {e["date"]: e["value"] for e in gst_entries if e["value"] is not None}
         dir_map   = {e["date"]: e["value"] for e in dir_entries if e["value"] is not None}
 
-        common = sorted(d for d in dates_set if d in spd_map and d in dir_map)
-        times  = [_hhmm(d) for d in common]
+        hours_win = station_data.get("window_hours", 48)
+        w_cutoff  = local_now() - datetime.timedelta(hours=hours_win)
+        common = sorted(d for d in dates_set if d in spd_map and d in dir_map
+                        and _parse_dt(d) >= w_cutoff)
+        times  = common
 
         dirs   = np.array([dir_map[d] for d in common])
         speeds = np.array([spd_map[d] for d in common])
@@ -1100,7 +1124,7 @@ def build_snotel_plots(station_name, station_data, triplet):
         make_wind_bar(ax_sb, times, speeds, 'Avg Wind Speed (mph)', spd_ylim, dirs=dirs)
         make_wind_bar(ax_gb, times, gusts,  'Max Gust (mph)',       gust_ylim, dirs=dirs)
 
-        fig.suptitle(f'{station_name} — Wind (Last 7 Days)',
+        fig.suptitle(f'{station_name} — Wind (Last {_window_label(hours_win)})',
                      fontsize=28.0, fontweight='bold', color='white', y=0.97)
         result["wind"] = fig
 
