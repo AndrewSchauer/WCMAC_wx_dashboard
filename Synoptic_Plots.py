@@ -154,12 +154,14 @@ def _convert(value, unit_str, conversion_map):
 # Data fetch
 # ---------------------------------------------------------------------------
 
-def fetch_synoptic_station(stid, recent_minutes=2880):
+def fetch_synoptic_station(stid, recent_minutes=2880, hours=None):
     """
     Fetch timeseries data from Synoptic API for one station.
     Returns dict with keys: meta, records, has_*, stats,
                             table_headers, table_rows.
     """
+    if hours:
+        recent_minutes = int(hours) * 60
     url    = f"{SYNOPTIC_BASE}/stations/timeseries"
     params = {"stid": stid, "recent": recent_minutes,
               "token": SYNOPTIC_TOKEN,
@@ -526,23 +528,29 @@ def fetch_iem_station(stid, network="MT_DCP", hours=48, tz_name=None, name=None)
     n_days    = hours // 24 + 2
     dates     = [(now_local - datetime.timedelta(days=d)).date() for d in range(n_days)]
 
+    def _get_day(d):
+        r = requests.get(IEM_OBHISTORY,
+                         params={"station": stid, "network": network,
+                                 "date": d.isoformat(), "full": "true"},
+                         headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        payload = r.json()
+        return payload if isinstance(payload, list) else payload.get("data", [])
+
     rows, errors = {}, []
-    for d in sorted(set(dates)):
-        try:
-            r = requests.get(IEM_OBHISTORY,
-                             params={"station": stid, "network": network,
-                                     "date": d.isoformat(), "full": "true"},
-                             headers=HEADERS, timeout=30)
-            r.raise_for_status()
-            payload = r.json()
-        except Exception as exc:
-            errors.append(f"{d}: {exc}")
-            continue
-        data = payload if isinstance(payload, list) else payload.get("data", [])
-        for rec in data or []:
-            key = rec.get("utc_valid")
-            if key:
-                rows[key] = rec
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {d: pool.submit(_get_day, d) for d in sorted(set(dates))}
+        for d, fut in futures.items():
+            try:
+                data = fut.result()
+            except Exception as exc:
+                errors.append(f"{d}: {exc}")
+                continue
+            for rec in data or []:
+                key = rec.get("utc_valid")
+                if key:
+                    rows[key] = rec
 
     if not rows:
         detail = f" ({'; '.join(errors)})" if errors else ""
@@ -592,6 +600,31 @@ def fetch_iem_station(stid, network="MT_DCP", hours=48, tz_name=None, name=None)
             "snow_depth":    _first(rec, "SDIRGZZ", "snowdepth"),
         })
     records.sort(key=lambda r: r["dt"])
+
+    # RAWS also send a once-a-day report (daily min/max temp, ~06:00 local)
+    # that arrives as its own row with no RH/wind/etc. Left alone it shows up
+    # as a gap in the plots, so merge every row in the same clock hour into one,
+    # keeping the regular hourly ob's time and filling only missing values.
+    merged = {}
+    for rec in records:
+        key = rec["dt"].replace(minute=0, second=0, microsecond=0)
+        filled = sum(v is not None for k, v in rec.items() if k not in ("dt", "time_label"))
+        cur = merged.get(key)
+        if cur is None:
+            merged[key] = (filled, dict(rec))
+            continue
+        cur_filled, cur_rec = cur
+        base, extra = (rec, cur_rec) if filled > cur_filled else (cur_rec, rec)
+        out = dict(base)
+        for k, v in extra.items():
+            if out.get(k) is None and v is not None:
+                out[k] = v
+        merged[key] = (max(filled, cur_filled), out)
+    records = [r for _, r in sorted(merged.values(), key=lambda t: t[1]["dt"])]
+    # Drop rows that still have no temperature, RH or wind at all
+    records = [r for r in records
+               if any(r[k] is not None for k in ("temp_air", "rh", "wind_spd"))]
+
     if not records:
         raise ValueError(f"IEM returned no observations for {stid} in the last {hours} h")
 
@@ -623,7 +656,7 @@ def _infer_iem_network(stid):
     return _NWSLI_STATE_NETWORK.get((stid or "").strip().upper()[-2:], "MT_DCP")
 
 
-def fetch_station(stid, source=None, network=None, name=None):
+def fetch_station(stid, source=None, network=None, name=None, hours=48):
     """
     Fetch a weather station from the right source.
     If source/network aren't given, they come from DEFAULT_SYNOPTIC_STATIONS.
@@ -635,14 +668,14 @@ def fetch_station(stid, source=None, network=None, name=None):
     network = network or cfg.get("network") or _infer_iem_network(stid)
 
     if source == "iem":
-        return fetch_iem_station(stid, network=network, name=name)
+        return fetch_iem_station(stid, network=network, name=name, hours=hours)
     if source == "auto":
         try:
-            return fetch_synoptic_station(stid)
+            return fetch_synoptic_station(stid, hours=hours)
         except Exception as exc:
             print(f"[{stid}] Synoptic failed ({exc}); falling back to IEM")
-            return fetch_iem_station(stid, network=network, name=name)
-    return fetch_synoptic_station(stid)
+            return fetch_iem_station(stid, network=network, name=name, hours=hours)
+    return fetch_synoptic_station(stid, hours=hours)
 
 
 # ---------------------------------------------------------------------------
@@ -719,12 +752,47 @@ def _style_ax(ax):
     ax.xaxis.label.set_color('lightgray')
 
 
-def _vlines_6hr(ax, times):
-    _6hr = {'00:00', '06:00', '12:00', '18:00'}
-    for i, t in enumerate(times):
-        if t[:5] in _6hr:
-            ax.axvline(x=i, color='#7777bb', linewidth=1.3,
-                       linestyle='-', alpha=0.95, zorder=8)
+def time_axis(dts, long_after_hours=60):
+    """
+    Work out x-axis ticks, tick labels and vertical guide lines for a list of
+    datetimes (one per plotted point, oldest first).
+      * up to ~2.5 days: ~12 HH:MM ticks, guide lines every 6 hours
+      * longer (7-day view): ticks at midnight ("Sat 10/24") and noon
+        ("12:00"), guide lines once a day at midnight
+    Returns {"ticks": [idx], "labels": [str], "vlines": [idx], "long": bool}.
+    """
+    n = len(dts)
+    if n == 0:
+        return {"ticks": [], "labels": [], "vlines": [], "long": False}
+    span_h = (dts[-1] - dts[0]).total_seconds() / 3600.0
+    is_long = span_h > long_after_hours
+    # index of the first point in each new clock hour
+    first_in_hour = [i for i in range(n)
+                     if i == 0 or (dts[i].hour, dts[i].date()) != (dts[i-1].hour, dts[i-1].date())]
+    if not is_long:
+        step   = max(1, n // 12)
+        ticks  = list(range(0, n, step))
+        labels = [dts[i].strftime('%H:%M') for i in ticks]
+        vlines = [i for i in first_in_hour if dts[i].hour in (0, 6, 12, 18)]
+    else:
+        ticks  = [i for i in first_in_hour if dts[i].hour in (0, 12)]
+        labels = [dts[i].strftime('%a %m/%d') if dts[i].hour == 0 else '12:00'
+                  for i in ticks]
+        vlines = [i for i in first_in_hour if dts[i].hour == 0]
+    return {"ticks": ticks, "labels": labels, "vlines": vlines, "long": is_long}
+
+
+def window_label(hours):
+    """'48-Hour' / '7-Day' style label for a plot window length in hours."""
+    hours = int(hours)
+    return f"{hours // 24}-Day" if hours >= 72 and hours % 24 == 0 else f"{hours}-Hour"
+
+
+def _vlines_6hr(ax, tax):
+    """Vertical guide lines (every 6 h, or daily on long windows)."""
+    for i in tax["vlines"]:
+        ax.axvline(x=i, color='#7777bb', linewidth=1.3,
+                   linestyle='-', alpha=0.95, zorder=8)
 
 
 def _gridlines(ax, y_min, y_max, minor=2, major=10):
@@ -745,12 +813,12 @@ def _gridlines(ax, y_min, y_max, minor=2, major=10):
             ax.yaxis.set_minor_locator(MultipleLocator(1))
 
 
-def _apply_xaxis(ax, x, times, step):
-    ax.set_xticks(x[::step])
-    ax.set_xticklabels([times[i] for i in range(0, len(times), step)],
-                       fontsize=13.0, color='lightgray', rotation=30, ha='right')
-    ax.set_xlim(-0.5, len(times) - 0.5)
-    _vlines_6hr(ax, times)
+def _apply_xaxis(ax, tax, n):
+    ax.set_xticks(tax["ticks"])
+    ax.set_xticklabels(tax["labels"], fontsize=13.0, color='lightgray',
+                       rotation=30, ha='right')
+    ax.set_xlim(-0.5, n - 0.5)
+    _vlines_6hr(ax, tax)
 
 
 def _speed_colors(vals, ylim):
@@ -786,7 +854,7 @@ def build_synoptic_plots(name, station_data):
     times = [r["time_label"] for r in records]
     dts   = [r["dt"]         for r in records]
     x     = np.arange(len(records))
-    step  = max(1, len(records) // 12)
+    tax   = time_axis(dts)           # ticks / labels / guide lines
 
     date_range = ""
     if dts:
@@ -831,7 +899,7 @@ def build_synoptic_plots(name, station_data):
             y_lo, y_hi, span = -20, 50, 70
 
         _gridlines(ax_t, y_lo, y_hi, minor=1, major=5)
-        _vlines_6hr(ax_t, times)
+        _vlines_6hr(ax_t, tax)
 
         ax_t.fill_between(x, y_lo, t_clean, alpha=0.15, color='#ff9944', zorder=2)
         ax_t.plot(x, t_clean, color='#ffaa55', linewidth=2.5,
@@ -854,14 +922,14 @@ def build_synoptic_plots(name, station_data):
         ax_t.legend(loc='upper left', fontsize=14.0, facecolor='#16213e',
                     edgecolor='#666688', labelcolor='white')
         ax_t.grid(False)
-        _apply_xaxis(ax_t, x, times, step)
+        _apply_xaxis(ax_t, tax, len(x))
 
         if has_rh:
             ax_r = axes[1][0]
             _style_ax(ax_r)
             rh_clean = np.array([v if v is not None else np.nan for v in rhs])
             _gridlines(ax_r, 0, 105, minor=0, major=25)
-            _vlines_6hr(ax_r, times)
+            _vlines_6hr(ax_r, tax)
             ax_r.fill_between(x, rh_clean, alpha=0.35, color='#00e676', zorder=2)
             ax_r.plot(x, rh_clean, color='#00e676', linewidth=1.8, zorder=3)
             ax_r.set_ylim(0, 105)
@@ -870,7 +938,7 @@ def build_synoptic_plots(name, station_data):
                            fontweight='bold', pad=6)
             ax_r.set_ylabel('RH %', color='lightgray', fontsize=18.0)
             ax_r.grid(False)
-            _apply_xaxis(ax_r, x, times, step)
+            _apply_xaxis(ax_r, tax, len(x))
 
         fig.suptitle(f'{name} \u2014 Temperature', fontsize=28.0,
                      fontweight='bold', color='white')
@@ -922,7 +990,7 @@ def build_synoptic_plots(name, station_data):
             bar_colors = _speed_colors(vals, ylim)
             for y in range(0, ylim + 1, 5):
                 ax.axhline(y, color='white', linewidth=1.1, linestyle='-', zorder=1)
-            _vlines_6hr(ax, times)
+            _vlines_6hr(ax, tax)
             ax.bar(x, vals, color=bar_colors, width=0.8, zorder=2, edgecolor='none')
             ax.plot(x, vals, color='white', linewidth=0.8, alpha=0.4, zorder=3)
             # Wind barbs
@@ -949,7 +1017,7 @@ def build_synoptic_plots(name, station_data):
             ax.set_xlim(-0.5, len(x) - 0.5)
             ax.set_ylim(0, ylim)
             ax.grid(False)
-            _apply_xaxis(ax, x, times, step)
+            _apply_xaxis(ax, tax, len(x))
 
         spd_ylim = _tiered_ylim(spd_arr)
         _wind_bar(ax_spd_bar, spd_arr, 'Avg Wind Speed (mph)', spd_ylim)
@@ -1014,7 +1082,7 @@ def build_synoptic_plots(name, station_data):
         if p_ok:
             ax_p = axes_raw[ax_idx][0]; ax_idx += 1
             _style_ax(ax_p)
-            _vlines_6hr(ax_p, times)
+            _vlines_6hr(ax_p, tax)
 
             if has_hourly_precip:
                 # ── Hourly bar chart + cumulative line overlay ─────────────
@@ -1088,7 +1156,7 @@ def build_synoptic_plots(name, station_data):
                 ax_p.tick_params(axis='y', colors='#5599ff', labelsize=16)
 
             ax_p.grid(False)
-            _apply_xaxis(ax_p, x, times, step)
+            _apply_xaxis(ax_p, tax, len(x))
 
         # ── Snow depth panel ──────────────────────────────────────────────────
         if s_ok:
@@ -1099,7 +1167,7 @@ def build_synoptic_plots(name, station_data):
             s_lo  = s_mn - s_pad; s_hi = s_mx + s_pad
             _style_ax(ax_s)
             _gridlines(ax_s, s_lo, s_hi, minor=1, major=5)
-            _vlines_6hr(ax_s, times)
+            _vlines_6hr(ax_s, tax)
             safe_s = np.where(np.isnan(s_vals), s_lo, s_vals)
             ax_s.fill_between(x, s_lo, safe_s, alpha=0.20, color='#7799ff', zorder=2)
             ax_s.plot(x, s_vals, color='#8899ff', linewidth=2.5, zorder=3)
@@ -1110,7 +1178,7 @@ def build_synoptic_plots(name, station_data):
             ax_s.yaxis.label.set_color('#7799ff')
             ax_s.tick_params(axis='y', colors='#7799ff', labelsize=16)
             ax_s.grid(False)
-            _apply_xaxis(ax_s, x, times, step)
+            _apply_xaxis(ax_s, tax, len(x))
 
         fig.suptitle(f'{name} \u2014 Precipitation & Snow', fontsize=28.0,
                      fontweight='bold', color='white')
