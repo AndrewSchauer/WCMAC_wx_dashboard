@@ -483,6 +483,16 @@ def summary_plots():
 
         loaded = [s for s in stations if s.get('data')]
 
+        def _stat_temp(stat_dict, kind):
+            """Max/Min temp from a station's stat chips ('24h Max Temp', etc.)."""
+            for key in (f'24h {kind} Temp', f'{kind} Temp', f'Daily {kind} Temp'):
+                if key in stat_dict:
+                    try:
+                        return float(str(stat_dict[key]).replace('°F', '').replace('°', '').strip())
+                    except ValueError:
+                        return None
+            return None
+
         # Network Summary uses only the WCMAC stations (stations.xlsx list).
         # If none of the posted stations match (e.g. renamed), keep them all.
         _wanted = {n.strip().lower() for n in SUMMARY_STATION_NAMES}
@@ -517,14 +527,8 @@ def summary_plots():
                 # Try stats first for max/min temp
                 stats = data.get('stats', [])
                 stat_dict = {pair[0]: pair[1] for pair in stats if isinstance(pair, (list, tuple)) and len(pair) == 2}
-                # Parse "XX °F" strings
-                def parse_f(s):
-                    try:
-                        return float(str(s).replace('°F','').replace('°','').strip())
-                    except:
-                        return None
-                mx = parse_f(stat_dict.get('Max Temp'))
-                mn = parse_f(stat_dict.get('Min Temp'))
+                mx = _stat_temp(stat_dict, 'Max')
+                mn = _stat_temp(stat_dict, 'Min')
                 if mx is not None:
                     all_max_temps.append(mx)
                 if mn is not None:
@@ -533,13 +537,8 @@ def summary_plots():
             elif net == 'synoptic':
                 stats = data.get('stats', [])
                 stat_dict = {pair[0]: pair[1] for pair in stats if isinstance(pair, (list, tuple)) and len(pair) == 2}
-                def _parse_syn_f(sv):
-                    try:
-                        return float(str(sv).replace('°F','').replace('°','').strip())
-                    except:
-                        return None
-                mx = _parse_syn_f(stat_dict.get('Max Temp'))
-                mn = _parse_syn_f(stat_dict.get('Min Temp'))
+                mx = _stat_temp(stat_dict, 'Max')
+                mn = _stat_temp(stat_dict, 'Min')
                 if mx is not None:
                     all_max_temps.append(mx)
                 if mn is not None:
