@@ -451,17 +451,17 @@ def compute_snotel_stats(station_data):
     tobs_entries = [v for v in hourly_24h.get("TOBS", []) if v["value"] is not None]
     if tobs_entries:
         t_vals = np.array([e["value"] for e in tobs_entries])
-        stats.append(("Max Temp",  f"{t_vals.max():.0f} °F"))
-        stats.append(("Min Temp",  f"{t_vals.min():.0f} °F"))
-        stats.append(("Avg Temp",  f"{t_vals.mean():.1f} °F"))
+        stats.append(("24h Max Temp",  f"{t_vals.max():.0f} °F"))
+        stats.append(("24h Min Temp",  f"{t_vals.min():.0f} °F"))
+        stats.append(("24h Avg Temp",  f"{t_vals.mean():.1f} °F"))
     elif daily.get("TMAX") and daily.get("TMIN"):
-        # Fallback to daily
+        # Fallback for daily-only stations: latest day's NRCS max/min
         mx = _vals(daily["TMAX"])
         mn = _vals(daily["TMIN"])
         if len(mx):
-            stats.append(("Max Temp",  f"{mx[-1]:.0f} °F"))
+            stats.append(("Daily Max Temp",  f"{mx[-1]:.0f} °F"))
         if len(mn):
-            stats.append(("Min Temp",  f"{mn[-1]:.0f} °F"))
+            stats.append(("Daily Min Temp",  f"{mn[-1]:.0f} °F"))
 
     # 24h snow total from hourly SNWD (max - min in last 24h as proxy, or diff)
     snwd_entries = [v for v in hourly_24h.get("SNWD", []) if v["value"] is not None]
@@ -857,41 +857,70 @@ def _make_24h_swe_precip(station_name, station_data):
 
     ax2 = None
 
+    # ── Shared vertical scale ────────────────────────────────────────────────
+    # SWE (left) and precip (right) use the SAME inches-per-tick so their
+    # changes can be compared directly. Each axis spans the same total range,
+    # starts on a whole 0.1", and is ticked every 0.1". The two axes can start
+    # at different values (e.g. SWE 0.0–0.6, precip 1.2–1.8).
+    swe_ok  = not np.all(np.isnan(swe_vals))
+    prec_ok = not np.all(np.isnan(prec_vals))
+    STEP = 0.1
+    ranges = []
+    if swe_ok:  ranges.append(float(np.nanmax(swe_vals)  - np.nanmin(swe_vals)))
+    if prec_ok: ranges.append(float(np.nanmax(prec_vals) - np.nanmin(prec_vals)))
+    span = max(max(ranges) + 2 * STEP, 0.5)              # at least 0.5" tall
+    span = round(np.ceil(round(span / STEP, 6)) * STEP, 1)
+
+    def _axis_limits(vals):
+        """Centre the series in a window `span` tall, starting on a 0.1" line."""
+        v_min = float(np.nanmin(vals)); v_max = float(np.nanmax(vals))
+        lo = (v_min + v_max) / 2 - span / 2
+        lo = max(0.0, np.floor(round(lo / STEP, 6)) * STEP)   # can't be negative
+        lo = round(lo, 1)
+        return lo, round(lo + span, 1)
+
+    def _tick_axis(ax, lo, hi, color):
+        """0.1" ticks; past ~1.5" of range, label every 0.5" (0.1" minor ticks)."""
+        from matplotlib.ticker import MultipleLocator, FormatStrFormatter
+        if span <= 1.5:
+            ax.yaxis.set_major_locator(MultipleLocator(STEP))
+        else:
+            ax.yaxis.set_major_locator(MultipleLocator(0.5))
+            ax.yaxis.set_minor_locator(MultipleLocator(STEP))
+        ax.yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
+        ax.tick_params(axis='y', which='both', colors=color, labelsize=16)
+        ax.set_ylim(lo, hi); ax.autoscale(False)
+
     # ── Left axis: SWE ───────────────────────────────────────────────────────
-    swe_ok = not np.all(np.isnan(swe_vals))
     if swe_ok:
-        sv_min = float(np.nanmin(swe_vals)); sv_max = float(np.nanmax(swe_vals))
-        sv_pad = max((sv_max - sv_min) * 0.12, 0.25)
-        sv_lo  = max(sv_min - sv_pad, 0.0); sv_hi = sv_max + sv_pad   # SWE can't be < 0
-        _add_minor_hgrid(ax1, sv_lo, sv_hi, 0.1, 0.5)   # gridlines follow the SWE axis
+        sv_lo, sv_hi = _axis_limits(swe_vals)
+        _add_minor_hgrid(ax1, sv_lo, sv_hi, STEP, 0.5)   # gridlines follow the SWE axis
         safe = np.where(np.isnan(swe_vals), sv_lo, swe_vals)
         ax1.fill_between(x, sv_lo, safe, alpha=0.2, color="#44ccff", zorder=2)
         ax1.plot(x, swe_vals, color="#44ddff", linewidth=3.0, zorder=4, label="SWE (in)")
-        ax1.set_ylim(sv_lo, sv_hi); ax1.autoscale(False)
+        _tick_axis(ax1, sv_lo, sv_hi, "#44ccff")
     ax1.set_ylabel("SWE (in)", color="#44ccff", fontsize=18.0)
     ax1.yaxis.label.set_color("#44ccff")
     ax1.tick_params(axis="y", colors="#44ccff")
 
     # ── Right axis: Precip ───────────────────────────────────────────────────
-    prec_ok = not np.all(np.isnan(prec_vals))
     if prec_ok:
-        pv_min = float(np.nanmin(prec_vals)); pv_max = float(np.nanmax(prec_vals))
-        pv_pad = max((pv_max - pv_min) * 0.12, 1)
-        pv_lo  = pv_min - pv_pad;    pv_hi  = pv_max + pv_pad
+        pv_lo, pv_hi = _axis_limits(prec_vals)
         ax2 = ax1.twinx()
         ax2.set_facecolor("#1a1a2e"); ax2.spines[:].set_color("#444466")
         # One set of gridlines per plot: the precip axis only gets them when
         # there's no SWE axis. Its tick marks and labels are always shown.
+        # (Both axes start on a 0.1" line with the same span, so the precip
+        # ticks line up with the SWE gridlines.)
         if not swe_ok:
-            _add_minor_hgrid(ax2, pv_lo, pv_hi, 0.1, 0.5)
+            _add_minor_hgrid(ax2, pv_lo, pv_hi, STEP, 0.5)
         safe2 = np.where(np.isnan(prec_vals), pv_lo, prec_vals)
         ax2.fill_between(x, pv_lo, safe2, alpha=0.18, color="#55ddaa", zorder=2)
         ax2.plot(x, prec_vals, color="#44ffcc", linewidth=3.0, zorder=5,
                  label="Precip (in)")
-        ax2.set_ylim(pv_lo, pv_hi); ax2.autoscale(False)
+        _tick_axis(ax2, pv_lo, pv_hi, "#55ddaa")
         ax2.set_ylabel("Precip (in)", color="#55ddaa", fontsize=18.0)
         ax2.yaxis.label.set_color("#55ddaa")
-        ax2.tick_params(colors="#55ddaa", labelsize=16)
 
     _apply_time_ticks(ax1, tax)
     ax1.set_xlim(-0.5, len(x) - 0.5); ax1.grid(False)
