@@ -427,9 +427,10 @@ def _package_records(stid, meta, records, has_hourly_field):
     wdirs = [r["wind_dir"]  for r in stats_src if r["wind_dir"]  is not None]
     if temps:
         avg_temp = sum(temps) / len(temps)
-        stats += [["Max Temp", f"{max(temps):.1f} °F"],
-                  ["Min Temp", f"{min(temps):.1f} °F"],
-                  ["Avg Temp", f"{avg_temp:.1f} °F"]]
+        pfx = "24h " if records_24h else ""   # no "24h" if we fell back to all records
+        stats += [[pfx + "Max Temp", f"{max(temps):.1f} °F"],
+                  [pfx + "Min Temp", f"{min(temps):.1f} °F"],
+                  [pfx + "Avg Temp", f"{avg_temp:.1f} °F"]]
     if wdirs:
         import math
         sin_sum = sum(math.sin(math.radians(d)) for d in wdirs)
