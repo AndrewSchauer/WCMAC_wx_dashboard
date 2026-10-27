@@ -714,6 +714,11 @@ function _statVal(s,label){
   for(var i=0;i<s.data.stats.length;i++){var p=s.data.stats[i];if(p[0]===label)return p[1];}
   return null;
 }
+// First stat chip found among several labels (e.g. '24h Avg Temp', then 'Avg Temp')
+function _statAny(s,labels){
+  for(var i=0;i<labels.length;i++){var v=_statVal(s,labels[i]);if(v!==null)return v;}
+  return null;
+}
 function _num(str){
   if(!str) return null;
   var n=str.replace(/[\s]*(°F|mph|in|ft)[\s]*$/,'').replace(/^[+]/,'');
@@ -736,7 +741,7 @@ function buildSummaryTables(container){
   PRECIP_TABLE_ROWS.forEach(function(row){
     var s=_findStation(row);
     if(!s||s.state!=='loaded'){pt+='<tr><td class="st-name">'+_rowLabel(row,null)+'</td><td class="st-na" colspan="4">\u2013</td></tr>';return;}
-    var avgT=_num(_statVal(s,'Avg Temp'));
+    var avgT=_num(_statAny(s,['24h Avg Temp','Avg Temp']));
     var snow,water,depth;
     if(row.net==='snotel'){snow=_num(_statVal(s,'24h Snow'));water=_num(_statVal(s,'24h SWE'));depth=_num(_statVal(s,'Snow Depth'))||_tblDepth(s);}
     else{snow=_num(_statVal(s,'24h Snow \u0394'));water=_num(_statVal(s,'Precip Accum')||_statVal(s,'Precip (24h sum)'));depth=_num(_statVal(s,'Snow Depth'));}
@@ -748,7 +753,7 @@ function buildSummaryTables(container){
   WIND_TABLE_ROWS.forEach(function(row){
     var s=_findStation(row);
     if(!s||s.state!=='loaded'){wt+='<tr><td class="st-name">'+_rowLabel(row,null)+'</td><td class="st-na" colspan="4">\u2013</td></tr>';return;}
-    var avgT=_num(_statVal(s,'Avg Temp'));
+    var avgT=_num(_statAny(s,['24h Avg Temp','Avg Temp']));
     var dir=_statVal(s,'Wind Dir')||_statVal(s,'Primary Dir');
     var avg=_num(_statVal(s,'Avg Wind')||_statVal(s,'Avg Speed'));
     var gust=_num(_statVal(s,'Max Gust'));
